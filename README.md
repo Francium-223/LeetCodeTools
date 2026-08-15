@@ -57,7 +57,7 @@ Edit `LeetCodeTools.sublime-settings`:
 These languages can be used with Fetch (code template) and Submit; the offline Run is Python-only (see limitations below).
 以下语言可用于 Fetch（代码模板）和 Submit；离线 Run 目前仅支持 Python（见下方限制）。
 
-| Language slug 语言 | Extension 扩展名 | Run offline |
+| Language slug 语言 | Extension 扩展名 | Run offline 离线运行 |
 |------|------|------|
 | `python3` / `python` | `.py` | ✔️ |
 | `java` | `.java` | ❌️ |
