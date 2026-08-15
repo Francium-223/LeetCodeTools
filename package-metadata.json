@@ -1,0 +1,7 @@
+{
+    "url": "https://github.com/Francium-223/LeetCodeTools",
+    "description": "在 Sublime Text 里刷力扣（LeetCode.cn）：搜索题目、拉取题目与官方题解、离线运行、直接提交",
+    "platforms": ["*"],
+    "sublime_text": ">=4000",
+    "dependencies": []
+}
