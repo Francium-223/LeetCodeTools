@@ -70,6 +70,28 @@ def _problem_list_cache_path():
     return os.path.join(_cache_dir(), 'problem_list.json')
 
 
+def _study_plans_cache_path():
+    return os.path.join(_cache_dir(), 'study_plans.json')
+
+
+def _study_plan_problems_cache_path():
+    return os.path.join(_cache_dir(), 'study_plan_problems.json')
+
+
+def _cache_is_fresh(cache_path):
+    """判断缓存文件是否在 cache_age_days 天内。"""
+    if not os.path.exists(cache_path):
+        return False
+    try:
+        with open(cache_path, 'r', encoding='utf-8') as f:
+            data = json.load(f)
+        ts = data.get('timestamp', 0) if isinstance(data, dict) else 0
+        age_days = _settings().get('cache_age_days', 7)
+        return time.time() - ts < age_days * 86400
+    except Exception:
+        return False
+
+
 # ── 找到系统 Python 3.14 exe，用于跑 cookie_grabber.py ──
 
 def _find_system_python():
@@ -671,7 +693,21 @@ class LeetCodeToolsClient:
     # ── 题集（学习计划）──
 
     def list_study_plans(self):
-        """列出全部学习计划（题集），返回 [{slug, name, questionNum, premiumOnly}]。"""
+        """列出全部学习计划（题集），返回 [{slug, name, questionNum, premiumOnly}]。带缓存。"""
+        cache_path = _study_plans_cache_path()
+        if _cache_is_fresh(cache_path):
+            try:
+                with open(cache_path, 'r', encoding='utf-8') as f:
+                    return json.load(f).get('plans', [])
+            except Exception:
+                pass
+        plans = self._fetch_study_plans()
+        os.makedirs(_cache_dir(), exist_ok=True)
+        with open(cache_path, 'w', encoding='utf-8') as f:
+            json.dump({'timestamp': time.time(), 'plans': plans}, f, ensure_ascii=False)
+        return plans
+
+    def _fetch_study_plans(self):
         catalogs_data = self._graphql(
             'query { studyPlanV2Catalogs { slug } }')
         catalogs = catalogs_data.get('studyPlanV2Catalogs') or []
@@ -710,7 +746,25 @@ class LeetCodeToolsClient:
         return plans
 
     def get_study_plan_problems(self, plan_slug):
-        """列出某个学习计划里的题目，返回 [{frontendQuestionId, title, titleSlug, difficulty}]。"""
+        """列出某个学习计划里的题目，返回 [{frontendQuestionId, title, titleSlug, difficulty}]。带缓存。"""
+        cache_path = _study_plan_problems_cache_path()
+        by_slug = {}
+        if _cache_is_fresh(cache_path):
+            try:
+                with open(cache_path, 'r', encoding='utf-8') as f:
+                    by_slug = json.load(f).get('by_slug', {}) or {}
+            except Exception:
+                by_slug = {}
+        if plan_slug in by_slug:
+            return by_slug[plan_slug]
+        problems = self._fetch_study_plan_problems(plan_slug)
+        by_slug[plan_slug] = problems
+        os.makedirs(_cache_dir(), exist_ok=True)
+        with open(cache_path, 'w', encoding='utf-8') as f:
+            json.dump({'timestamp': time.time(), 'by_slug': by_slug}, f, ensure_ascii=False)
+        return problems
+
+    def _fetch_study_plan_problems(self, plan_slug):
         query = '''
         query studyPlanDetail($slug: String!) {
           studyPlanV2Detail(planSlug: $slug) {
@@ -739,6 +793,13 @@ class LeetCodeToolsClient:
                     'difficulty': q.get('difficulty') or '',
                 })
         return problems
+
+    def refresh_study_plans_cache(self):
+        """强制刷新题集列表缓存，并清空题集题目缓存。"""
+        for p in (_study_plans_cache_path(), _study_plan_problems_cache_path()):
+            if os.path.exists(p):
+                os.remove(p)
+        return self.list_study_plans()
 
 
 def _split_testcase_strings(example_testcases, meta_data_str):
@@ -1301,7 +1362,7 @@ class LeetcodeSubmitCommand(sublime_plugin.TextCommand):
             lines = ['=' * 50, '  LeetCode Submit -- ' + data['slug'], '=' * 50, '']
             status = r.get('status_msg', 'Unknown')
             if status == 'Accepted':
-                lines.append('Status:   Accepted \u2705')
+                lines.append('Status:   Accepted \u2714\ufe0f')
                 lines.append('Runtime:  ' + str(r.get('status_runtime', '?')) + '   Beat ' + str(round(r.get('runtime_percentile', 0), 1)) + '%')
                 lines.append('Memory:   ' + str(r.get('status_memory', '?')) + '   Beat ' + str(round(r.get('memory_percentile', 0), 1)) + '%')
                 lines.append('Passed:   ' + str(r.get('total_correct', '?')) + ' / ' + str(r.get('total_testcases', '?')))
@@ -1374,10 +1435,15 @@ class LeetcodeUpdateCommand(sublime_plugin.WindowCommand):
             cache = _problem_list_cache_path()
             if os.path.exists(cache):
                 os.remove(cache)
-            return client._fetch_problem_list()
+            problems = client._fetch_problem_list()
+            plans = client.refresh_study_plans_cache()
+            return {'problems': len(problems), 'plans': len(plans)}
 
         def done(window, result):
-            sublime.status_message('LeetCodeTools: Cache updated (' + str(len(result)) + ' problems)')
+            sublime.status_message(
+                'LeetCodeTools: Cache updated ('
+                + str(result['problems']) + ' problems, '
+                + str(result['plans']) + ' study plans)')
 
         sublime.status_message('LeetCodeTools: Updating cache...')
         _run_in_thread(self.window, work, _on_done=done)
