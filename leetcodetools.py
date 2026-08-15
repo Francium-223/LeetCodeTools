@@ -13,6 +13,7 @@ import contextlib
 import traceback
 import urllib.request
 import urllib.error
+import webbrowser
 
 
 # ==================== 配置 ====================
@@ -102,6 +103,61 @@ LANG_EXT = {
 
 EXT_LANG = {v: k for k, v in LANG_EXT.items() if v not in ('py',) or k == 'python3'}
 EXT_LANG['py'] = 'python3'
+
+
+def _detect_slug(fp):
+    """从文件路径推断题目 slug（优先读元数据 JSON 的 titleSlug）。"""
+    ext = os.path.splitext(fp)[1].lstrip('.')
+    base = fp[:-(len(ext) + 1)] if ext else fp
+    meta_base = base
+    for suffix in ('_in', '_out'):
+        if meta_base.endswith(suffix):
+            meta_base = meta_base[:-len(suffix)]
+            break
+    slug = None
+    json_path = meta_base + '.json'
+    if os.path.exists(json_path):
+        try:
+            with open(json_path, 'r', encoding='utf-8') as f:
+                slug = json.load(f).get('titleSlug')
+        except Exception:
+            slug = None
+    return slug or os.path.basename(meta_base)
+
+
+_VIDEO_PLACEHOLDER_RE = re.compile(
+    r'!\[([^\]]*)\]\(([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12})\)'
+)
+
+
+def _clean_solution_markdown(md, videos=None):
+    """规整 LeetCode 题解正文（本身已是 Markdown）：规整代码块语言标签、统一换行、把视频占位符换成封面链接。"""
+    content = (md or '').replace('\r\n', '\n').replace('\r', '\n')
+
+    def _fix_fence(m):
+        lang = re.sub(r'\s*\[.*?\]\s*$', '', m.group(1)).strip().lower()
+        return '```' + lang
+
+    content = re.sub(r'```([^\n`]*)', _fix_fence, content)
+
+    if videos:
+        counter = [0]
+
+        def _fix_video(m):
+            alt = m.group(1)
+            i = counter[0]
+            counter[0] += 1
+            cover = ''
+            if i < len(videos):
+                cover = (videos[i] or {}).get('coverUrl') or ''
+            if cover:
+                return '![' + alt + '](' + cover + ')'
+            return m.group(0)
+
+        content = _VIDEO_PLACEHOLDER_RE.sub(_fix_video, content)
+
+    content = re.sub(r'\n{3,}', '\n\n', content)
+    return content.strip()
 
 
 # ==================== Cookie & API helpers ====================
@@ -205,6 +261,11 @@ def _build_client():
     return LeetCodeToolsClient(raw)
 
 
+def _build_public_client():
+    """无需登录的公开客户端（题解等公开接口用）。"""
+    return LeetCodeToolsClient('')
+
+
 # ==================== LeetCode CN API 客户端 ====================
 
 class LeetCodeToolsClient:
@@ -229,11 +290,12 @@ class LeetCodeToolsClient:
         body = json.dumps(payload).encode()
         headers = {
             'Content-Type': 'application/json',
-            'Cookie': self.cookie_raw,
             'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36',
             'Origin': 'https://leetcode.cn',
             'Referer': 'https://leetcode.cn/problemset/',
         }
+        if self.cookie_raw:
+            headers['Cookie'] = self.cookie_raw
         if self.csrf_token:
             headers['X-CSRFToken'] = self.csrf_token
         req = urllib.request.Request('https://leetcode.cn/graphql/', data=body, headers=headers)
@@ -520,6 +582,163 @@ class LeetCodeToolsClient:
             if state == 'SUCCESS':
                 return data
         raise Exception('Interpret timed out')
+
+    # ── 官方题解 ──
+
+    def _find_official_solution(self, title_slug):
+        query = '''
+        query questionSolutionArticles($questionSlug: String!, $skip: Int, $first: Int, $orderBy: SolutionArticleOrderBy) {
+          questionSolutionArticles(questionSlug: $questionSlug, skip: $skip, first: $first, orderBy: $orderBy) {
+            totalNum
+            edges {
+              node {
+                title
+                slug
+                byLeetcode
+                topic { id }
+              }
+            }
+          }
+        }
+        '''
+        first = 20
+        skip = 0
+        while skip < 200:
+            data = self._graphql(query, {
+                'questionSlug': title_slug,
+                'skip': skip,
+                'first': first,
+                'orderBy': 'DEFAULT',
+            })
+            ps = data.get('questionSolutionArticles') or {}
+            edges = ps.get('edges') or []
+            for e in edges:
+                node = e.get('node') or {}
+                slug = node.get('slug') or ''
+                if node.get('byLeetcode') or 'by-leetcode-solution' in slug:
+                    return node
+            total = ps.get('totalNum') or 0
+            if skip + first >= total or not edges:
+                break
+            skip += first
+        return None
+
+    def _get_solution_detail(self, solution_slug):
+        query = '''
+        query solutionArticle($slug: String!) {
+          solutionArticle(slug: $slug) {
+            title
+            content
+            videosInfo {
+              videoId
+              coverUrl
+              duration
+            }
+          }
+        }
+        '''
+        data = self._graphql(query, {'slug': solution_slug})
+        return data.get('solutionArticle') or {}
+
+    def fetch_official_solution(self, title_slug, working_dir=None):
+        if working_dir is None:
+            working_dir = _working_dir()
+        article = self._find_official_solution(title_slug)
+        if not article:
+            raise ValueError('No official solution found for: ' + title_slug)
+        detail = self._get_solution_detail(article.get('slug') or '')
+        content = _clean_solution_markdown(detail.get('content'), detail.get('videosInfo'))
+        if not content.strip():
+            content = '_（题解内容为空）_'
+        # 原文链接
+        topic_id = None
+        topic = article.get('topic')
+        if isinstance(topic, dict):
+            topic_id = topic.get('id')
+        slug = article.get('slug') or ''
+        url = _base_url() + '/problems/' + title_slug + '/solutions/'
+        if topic_id:
+            url += str(topic_id) + '/'
+        url += slug + '/'
+        os.makedirs(working_dir, exist_ok=True)
+        md_path = os.path.join(working_dir, title_slug + '_explanation.md')
+        with open(md_path, 'w', encoding='utf-8') as f:
+            f.write('# ' + (article.get('title') or title_slug) + '（官方题解）\n\n')
+            f.write('> 原文：' + url + '\n\n')
+            f.write(content)
+        return md_path
+
+    # ── 题集（学习计划）──
+
+    def list_study_plans(self):
+        """列出全部学习计划（题集），返回 [{slug, name, questionNum, premiumOnly}]。"""
+        catalogs_data = self._graphql(
+            'query { studyPlanV2Catalogs { slug } }')
+        catalogs = catalogs_data.get('studyPlanV2Catalogs') or []
+        plans = []
+        for cat in catalogs:
+            cat_slug = cat.get('slug') or ''
+            if not cat_slug:
+                continue
+            offset = 0
+            limit = 100
+            while True:
+                data = self._graphql('''
+                    query studyPlansV2ByCatalog($catalogSlug: String!, $offset: Int!, $limit: Int!) {
+                      studyPlansV2ByCatalog(catalogSlug: $catalogSlug, offset: $offset, limit: $limit) {
+                        hasMore
+                        studyPlans {
+                          slug
+                          questionNum
+                          premiumOnly
+                          name
+                        }
+                      }
+                    }
+                ''', {'catalogSlug': cat_slug, 'offset': offset, 'limit': limit})
+                ps = data.get('studyPlansV2ByCatalog') or {}
+                for p in (ps.get('studyPlans') or []):
+                    plans.append({
+                        'slug': p.get('slug') or '',
+                        'name': p.get('name') or '',
+                        'questionNum': p.get('questionNum') or 0,
+                        'premiumOnly': bool(p.get('premiumOnly')),
+                    })
+                if not ps.get('hasMore'):
+                    break
+                offset += limit
+        return plans
+
+    def get_study_plan_problems(self, plan_slug):
+        """列出某个学习计划里的题目，返回 [{frontendQuestionId, title, titleSlug, difficulty}]。"""
+        query = '''
+        query studyPlanDetail($slug: String!) {
+          studyPlanV2Detail(planSlug: $slug) {
+            name
+            planSubGroups {
+              questions {
+                translatedTitle
+                titleSlug
+                title
+                questionFrontendId
+                difficulty
+              }
+            }
+          }
+        }
+        '''
+        data = self._graphql(query, {'slug': plan_slug})
+        detail = data.get('studyPlanV2Detail') or {}
+        problems = []
+        for group in (detail.get('planSubGroups') or []):
+            for q in (group.get('questions') or []):
+                problems.append({
+                    'frontendQuestionId': str(q.get('questionFrontendId', '')),
+                    'title': q.get('translatedTitle') or q.get('title') or '',
+                    'titleSlug': q.get('titleSlug') or '',
+                    'difficulty': q.get('difficulty') or '',
+                })
+        return problems
 
 
 def _split_testcase_strings(example_testcases, meta_data_str):
@@ -1194,5 +1413,122 @@ class LeetcodeFetchForceCommand(sublime_plugin.WindowCommand):
                 sublime.status_message('LeetCodeTools: #' + str(result['fid']) + ' force fetched')
 
         _run_in_thread(self.window, work, _on_done=done)
+
+
+# ─── Open in Browser ───
+
+class LeetcodeOpenBrowserCommand(sublime_plugin.TextCommand):
+    def run(self, edit):
+        fp = self.view.file_name()
+        if not fp:
+            sublime.error_message('Open a problem file first.')
+            return
+        slug = _detect_slug(fp)
+        url = _base_url() + '/problems/' + slug + '/'
+        try:
+            webbrowser.open(url)
+            sublime.status_message('LeetCodeTools: Opening ' + url)
+        except Exception as e:
+            sublime.error_message('LeetCodeTools: failed to open browser\n\n' + str(e))
+
+
+# ─── Fetch Official Explanations ───
+
+class LeetcodeFetchExplanationCommand(sublime_plugin.TextCommand):
+    def run(self, edit):
+        fp = self.view.file_name()
+        if not fp:
+            sublime.error_message('Open a problem file first.')
+            return
+        slug = _detect_slug(fp)
+        window = self.view.window()
+        if not window:
+            sublime.error_message('No window available.')
+            return
+
+        def work(window):
+            client = _build_public_client()
+            return client.fetch_official_solution(slug)
+
+        def done(window, result):
+            if result:
+                window.open_file(result)
+                sublime.status_message('LeetCodeTools: Official explanation fetched (' + slug + ')')
+
+        sublime.status_message('LeetCodeTools: Fetching official explanation...')
+        _run_in_thread(window, work, _on_done=done)
+
+
+# ─── Select from Problem Set ───
+
+class LeetcodeProblemSetCommand(sublime_plugin.WindowCommand):
+    def run(self):
+        sublime.status_message('LeetCode Tools: Loading problem sets...')
+
+        def work(window):
+            client = _build_client()
+            return client.list_study_plans()
+
+        def done(window, plans):
+            plans = [p for p in plans if p.get('slug')]
+            if not plans:
+                sublime.message_dialog('No problem sets found.')
+                return
+            items = []
+            for p in plans:
+                label = p['name']
+                if p.get('questionNum'):
+                    label += '  (' + str(p['questionNum']) + ' 题)'
+                if p.get('premiumOnly'):
+                    label += '  [会员]'
+                items.append([label, str(p.get('questionNum') or '')])
+
+            def on_select(idx):
+                if idx >= 0:
+                    self._pick_problem(plans[idx]['slug'])
+
+            self.window.show_quick_panel(items, on_select)
+
+        _run_in_thread(self.window, work, _on_done=done)
+
+    def _pick_problem(self, plan_slug):
+        sublime.status_message('LeetCode Tools: Loading problems...')
+
+        def work(window):
+            client = _build_client()
+            return client.get_study_plan_problems(plan_slug)
+
+        def done(window, problems):
+            if not problems:
+                sublime.message_dialog('No problems in this set.')
+                return
+            items = []
+            for p in problems:
+                fid = p.get('frontendQuestionId', '?')
+                items.append(['#' + str(fid) + '  ' + (p.get('title') or '?'),
+                              str(p.get('difficulty') or '?')])
+
+            def on_select(idx):
+                if idx >= 0:
+                    self._fetch_and_open(problems[idx]['frontendQuestionId'])
+
+            self.window.show_quick_panel(items, on_select)
+
+        _run_in_thread(self.window, work, _on_done=done)
+
+    def _fetch_and_open(self, fid):
+        def fetch_and_open(window):
+            sublime.status_message('LeetCode Tools: Fetching #' + str(fid) + '...')
+            client = _build_client()
+            return client.fetch_problem(fid)
+
+        def done_fetch(window, result):
+            if result:
+                for k in ('md_path', 'code_path'):
+                    if result.get(k):
+                        window.open_file(result[k])
+                sublime.status_message('LeetCodeTools: #' + str(fid) + ' fetched')
+
+        _run_in_thread(self.window, fetch_and_open, _on_done=done_fetch)
 
 
