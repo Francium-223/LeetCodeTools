@@ -1,0 +1,25 @@
+# Package Control 用 `git archive` 导出包，这里标记 export-ignore 的文件不会被装进用户的包。
+# Excluded from the exported package (Package Control uses `git archive`).
+
+# 仓库工具文件（本身不属于包内容）
+.gitattributes export-ignore
+.gitignore export-ignore
+
+# Sublime 工程 / 工作区文件
+*.sublime-project export-ignore
+*.sublime-workspace export-ignore
+
+# 图片 / 截图
+*.png export-ignore
+*.jpg export-ignore
+*.jpeg export-ignore
+*.gif export-ignore
+*.webp export-ignore
+images/** export-ignore
+screenshots/** export-ignore
+
+# 测试文件
+tests/** export-ignore
+test/** export-ignore
+*_test.py export-ignore
+test_*.py export-ignore
