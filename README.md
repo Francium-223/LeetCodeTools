@@ -1,6 +1,8 @@
 # LeetCodeTools for Sublime Text
 
-A Sublime Text plugin for practicing on [LeetCode](https://leetcode.com) without leaving your editor — search problems, fetch problems and official solutions, run offline, and submit directly.
+A [Sublime Text](www.sublimetext.com) plugin for practicing [LeetCode](leetcode.cn) without leaving your editor. It lets you search problems, fetch problems and official solutions, run your code offline against the official examples, submit directly to LeetCode, and pick problems from study plans like [Hot 100](https://leetcode.cn/studyplan/top-100-liked/) and [Top Interview 150](https://leetcode.cn/studyplan/top-interview-150/). Problems and solutions are saved locally as Markdown files; log in once and you're good to go.
+
+LeetCodeTools 是一个 [Sublime Text](https://www.sublimetext.com/) 插件，让你不用离开编辑器就能刷[力扣](leetcode.cn)（LeetCode）。它支持按题号或关键字搜索题目、拉取题目和官方题解、在本地离线运行代码并与官方示例对比、一键提交到力扣判题，还能从「[热题 100](https://leetcode.cn/studyplan/top-100-liked/)」「[面试经典 150 题](https://leetcode.cn/studyplan/top-interview-150/)」等题集里选题。题目和题解都会以 Markdown 文件保存到本地，登录一次即可长期使用。
 一个让你不用离开编辑器、直接在 [Sublime Text](https://www.sublimetext.com/) 里刷[力扣（LeetCode.cn）](https://leetcode.cn)的插件：搜索题目、拉取题目与官方题解、离线运行、直接提交。
 
 ## Features / 功能
