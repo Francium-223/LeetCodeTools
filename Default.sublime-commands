@@ -8,5 +8,12 @@
     { "caption": "LeetCode Tools: Select from Problem Set", "command": "leetcode_problem_set" },
     { "caption": "LeetCode Tools: Update", "command": "leetcode_update" },
     { "caption": "LeetCode Tools: Run",    "command": "leetcode_run" },
-    { "caption": "LeetCode Tools: Submit", "command": "leetcode_submit" }
+    { "caption": "LeetCode Tools: Submit", "command": "leetcode_submit" },
+    {
+        "caption": "Preferences: LeetCodeTools Settings",
+        "command": "edit_settings",
+        "args": {
+            "base_file": "${packages}/LeetCodeTools/LeetCodeTools.sublime-settings"
+        }
+    }
 ]

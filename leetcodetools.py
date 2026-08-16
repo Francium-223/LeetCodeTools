@@ -195,9 +195,16 @@ def _cookie_login():
     err_file = os.path.join(_cache_dir(), '.grabber_err.txt')
     os.makedirs(_cache_dir(), exist_ok=True)
     sublime.status_message('LeetCode Tools: Opening browser...')
+    popen_kwargs = {}
+    if os.name == 'nt':
+        startupinfo = subprocess.STARTUPINFO()
+        startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+        startupinfo.wShowWindow = subprocess.SW_HIDE
+        popen_kwargs['startupinfo'] = startupinfo
     subprocess.Popen(
         [python_exe, script, '--cache-dir', _cache_dir()],
-        stderr=open(err_file, 'w')
+        stderr=open(err_file, 'w'),
+        **popen_kwargs
     )
 
     # 等 2 秒检查进程是否还活着
