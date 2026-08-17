@@ -813,6 +813,39 @@ class LeetCodeToolsClient:
                 os.remove(p)
         return self.list_study_plans()
 
+    # ── 每日一题 ──
+
+    def get_daily_question(self):
+        """获取今日的每日一题，返回 {frontendQuestionId, titleSlug, title, difficulty}。"""
+        query = '''
+        query questionOfToday {
+          todayRecord {
+            date
+            question {
+              questionId
+              questionFrontendId
+              difficulty
+              title
+              translatedTitle
+              titleSlug
+              isPaidOnly
+            }
+          }
+        }
+        '''
+        data = self._graphql(query)
+        records = data.get('todayRecord') or []
+        if not records:
+            raise ValueError('No daily question found.')
+        q = records[0].get('question') or {}
+        return {
+            'frontendQuestionId': str(q.get('questionFrontendId', '')),
+            'titleSlug': q.get('titleSlug') or '',
+            'title': q.get('translatedTitle') or q.get('title') or '',
+            'difficulty': q.get('difficulty') or '',
+            'isPaidOnly': bool(q.get('isPaidOnly')),
+        }
+
 
 def _split_testcase_strings(example_testcases, meta_data_str):
     """将 exampleTestcases 按参数数量拆成多个测试用例字符串。"""
@@ -1647,5 +1680,30 @@ class LeetcodeProblemSetCommand(sublime_plugin.WindowCommand):
                 sublime.status_message('LeetCodeTools: #' + str(fid) + ' fetched')
 
         _run_in_thread(self.window, fetch_and_open, _on_done=done_fetch)
+
+
+# ─── Daily Question ───
+
+class LeetcodeDailyCommand(sublime_plugin.WindowCommand):
+    def run(self):
+        sublime.status_message('LeetCode Tools: Loading daily question...')
+
+        def work(window):
+            client = _build_client()
+            q = client.get_daily_question()
+            fid = q.get('frontendQuestionId')
+            if not fid:
+                raise ValueError('No daily question found.')
+            sublime.status_message('LeetCode Tools: Fetching daily question #' + str(fid) + '...')
+            return client.fetch_problem(fid)
+
+        def done(window, result):
+            if result:
+                for k in ('md_path', 'code_path'):
+                    if result.get(k):
+                        window.open_file(result[k])
+                sublime.status_message('LeetCodeTools: daily question fetched')
+
+        _run_in_thread(self.window, work, _on_done=done)
 
 

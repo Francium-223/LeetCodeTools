@@ -6,6 +6,7 @@
     { "caption": "LeetCode Tools: Open in Browser", "command": "leetcode_open_browser" },
     { "caption": "LeetCode Tools: Fetch Official Explanations", "command": "leetcode_fetch_explanation" },
     { "caption": "LeetCode Tools: Select from Problem Set", "command": "leetcode_problem_set" },
+    { "caption": "LeetCode Tools: Daily Question", "command": "leetcode_daily" },
     { "caption": "LeetCode Tools: Update", "command": "leetcode_update" },
     { "caption": "LeetCode Tools: Run",    "command": "leetcode_run" },
     { "caption": "LeetCode Tools: Submit", "command": "leetcode_submit" },
