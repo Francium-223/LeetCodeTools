@@ -151,6 +151,77 @@ def _detect_slug(fp):
     return slug or os.path.basename(meta_base)
 
 
+def _guess_image_ext(url, resp):
+    """根据 URL 路径或 Content-Type 推断图片扩展名。"""
+    path = url.split('?')[0]
+    ext = os.path.splitext(path)[1].lower()
+    if ext in ('.png', '.jpg', '.jpeg', '.gif', '.webp', '.svg', '.bmp'):
+        return '.jpg' if ext == '.jpeg' else ext
+    ctype = ''
+    try:
+        ctype = (resp.headers.get('Content-Type', '') or '').split(';')[0].strip().lower()
+    except Exception:
+        ctype = ''
+    mapping = {
+        'image/png': '.png', 'image/jpeg': '.jpg', 'image/gif': '.gif',
+        'image/webp': '.webp', 'image/svg+xml': '.svg', 'image/bmp': '.bmp',
+    }
+    return mapping.get(ctype, '.png')
+
+
+def _download_images(html, img_dir, rel_prefix):
+    """下载 HTML 里的 <img> 到本地 img_dir，替换成 ![](rel_prefix/fname)。"""
+    counter = [0]
+
+    def _replace(m):
+        src = m.group(1)
+        counter[0] += 1
+        try:
+            req = urllib.request.Request(src, headers={'User-Agent': 'Mozilla/5.0'})
+            resp = urllib.request.urlopen(req, timeout=15)
+            data = resp.read()
+            ext = _guess_image_ext(src, resp)
+            fname = str(counter[0]) + ext
+            os.makedirs(img_dir, exist_ok=True)
+            with open(os.path.join(img_dir, fname), 'wb') as f:
+                f.write(data)
+            return '![](' + rel_prefix + '/' + fname + ')'
+        except Exception:
+            return '![](' + src + ')'
+
+    return re.sub(r'<img[^>]*src="([^"]+)"[^>]*/?>', _replace, html)
+
+
+_MD_IMAGE_RE = re.compile(r'!\[([^\]]*)\]\(((?:[^)\s]|\\[()])+)\)')
+
+
+def _download_markdown_images(md, img_dir, rel_prefix):
+    """下载 Markdown 里 ![](http...) 图片到本地，替换成本地路径。"""
+    counter = [0]
+
+    def _replace(m):
+        alt = m.group(1)
+        src = m.group(2).strip()
+        raw_src = src.replace('\\(', '(').replace('\\)', ')')
+        if not raw_src.startswith(('http://', 'https://')):
+            return m.group(0)
+        counter[0] += 1
+        try:
+            req = urllib.request.Request(raw_src, headers={'User-Agent': 'Mozilla/5.0'})
+            resp = urllib.request.urlopen(req, timeout=15)
+            data = resp.read()
+            ext = _guess_image_ext(raw_src, resp)
+            fname = str(counter[0]) + ext
+            os.makedirs(img_dir, exist_ok=True)
+            with open(os.path.join(img_dir, fname), 'wb') as f:
+                f.write(data)
+            return '![' + alt + '](' + rel_prefix + '/' + fname + ')'
+        except Exception:
+            return m.group(0)
+
+    return _MD_IMAGE_RE.sub(_replace, md)
+
+
 _VIDEO_PLACEHOLDER_RE = re.compile(
     r'!\[([^\]]*)\]\(([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12})\)'
 )
@@ -427,6 +498,8 @@ class LeetCodeToolsClient:
 
         # MD
         md_path = os.path.join(working_dir, title_slug + '.md')
+        img_folder = title_slug + '_images'
+        img_dir = os.path.join(working_dir, img_folder)
         difficulty = detail.get('difficulty') or 'Unknown'
         tags = ', '.join((t.get('translatedName') or t.get('name') or '')
                          for t in detail.get('topicTags', []))
@@ -441,7 +514,7 @@ class LeetCodeToolsClient:
         content = re.sub(r'<code>(.*?)</code>', r'`\1`', content)
         content = re.sub(r'<em>(.*?)</em>', r'*\1*', content)
         content = re.sub(r'<strong>(.*?)</strong>', r'**\1**', content)
-        content = re.sub(r'<img[^>]*src="([^"]+)"[^>]*/?>', r'![](\1)', content)
+        content = _download_images(content, img_dir, img_folder)
         content = re.sub(r'<[^>]+>', '', content)
         content = re.sub(r'&nbsp;', ' ', content)
         content = re.sub(r'&lt;', '<', content)
@@ -684,6 +757,9 @@ class LeetCodeToolsClient:
         content = _clean_solution_markdown(detail.get('content'), detail.get('videosInfo'))
         if not content.strip():
             content = '_（题解内容为空）_'
+        img_folder = title_slug + '_explanation_images'
+        img_dir = os.path.join(working_dir, img_folder)
+        content = _download_markdown_images(content, img_dir, img_folder)
         # 原文链接
         topic_id = None
         topic = article.get('topic')
@@ -1558,8 +1634,6 @@ class LeetcodeFetchForceCommand(sublime_plugin.WindowCommand):
                     window.open_file(result['md_path'])
                 if result.get('code_path'):
                     window.open_file(result['code_path'])
-                if result.get('json_path'):
-                    window.open_file(result['json_path'])
                 sublime.status_message('LeetCodeTools: #' + str(result['fid']) + ' force fetched')
 
         _run_in_thread(self.window, work, _on_done=done)
