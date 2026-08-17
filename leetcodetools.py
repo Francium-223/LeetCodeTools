@@ -39,6 +39,10 @@ def _lang():
     return _settings().get('language', 'zh')
 
 
+def _run_timeout():
+    return _settings().get('run_timeout', 1)
+
+
 def _cache_dir():
     return os.path.join(os.path.expanduser('~'), '.leetcode_tools_cache')
 
@@ -437,6 +441,7 @@ class LeetCodeToolsClient:
         content = re.sub(r'<code>(.*?)</code>', r'`\1`', content)
         content = re.sub(r'<em>(.*?)</em>', r'*\1*', content)
         content = re.sub(r'<strong>(.*?)</strong>', r'**\1**', content)
+        content = re.sub(r'<img[^>]*src="([^"]+)"[^>]*/?>', r'![](\1)', content)
         content = re.sub(r'<[^>]+>', '', content)
         content = re.sub(r'&nbsp;', ' ', content)
         content = re.sub(r'&lt;', '<', content)
@@ -1041,7 +1046,16 @@ def _parse_testcases(example_testcases, meta_data_str):
     return testcases
 
 
-def _run_offline(code_str, testcases, func_name, filename='<string>'):
+def _fmt_time(sec):
+    """把秒数格式化成易读的运行时间。"""
+    if sec < 0.001:
+        return '%.2f µs' % (sec * 1e6)
+    if sec < 1:
+        return '%.2f ms' % (sec * 1e3)
+    return '%.2f s' % sec
+
+
+def _run_offline(code_str, testcases, func_name, filename='<string>', timeout=None):
     namespace = {
         'ListNode': ListNode, 'TreeNode': TreeNode, 'Node': Node,
         '_build_list': _build_list, '_build_tree': _build_tree, '_build_graph': _build_graph,
@@ -1051,7 +1065,7 @@ def _run_offline(code_str, testcases, func_name, filename='<string>'):
         exec('from typing import *', namespace)
         exec(compile(typed_code, filename, 'exec'), namespace)
     except Exception as e:
-        return [('', '', '', 'Compile/Exec Error:\n' + traceback.format_exc())]
+        return [('', '', '', 'Compile/Exec Error:\n' + traceback.format_exc(), 0.0)]
 
     func = namespace.get(func_name)
     if func is None:
@@ -1072,18 +1086,39 @@ def _run_offline(code_str, testcases, func_name, filename='<string>'):
                 func = v
                 break
     if func is None:
-        return [('', '', '', 'Function "' + func_name + '" not found in code.')]
+        return [('', '', '', 'Function "' + func_name + '" not found in code.', 0.0)]
 
     results = []
     for args in testcases:
         input_repr = ', '.join(json.dumps(_to_json(a), default=str) for a in args)
         buf = io.StringIO()
-        try:
-            with contextlib.redirect_stdout(buf):
-                output = func(*args)
-            results.append((input_repr, json.dumps(_to_json(output)), buf.getvalue().strip(), None))
-        except Exception as e:
-            results.append((input_repr, '', buf.getvalue().strip(), traceback.format_exc()))
+        box = {}
+
+        def run_one():
+            try:
+                with contextlib.redirect_stdout(buf):
+                    box['output'] = func(*args)
+            except BaseException:
+                box['error'] = traceback.format_exc()
+
+        th = threading.Thread(target=run_one, daemon=True)
+        t0 = time.time()
+        th.start()
+        if timeout and timeout > 0:
+            th.join(timeout)
+        else:
+            th.join()
+        elapsed = time.time() - t0
+
+        if th.is_alive():
+            results.append((input_repr, '', buf.getvalue().strip(),
+                            'Time Limit Exceeded (' + _fmt_time(timeout) + ')', elapsed))
+            break
+        elif 'error' in box:
+            results.append((input_repr, '', buf.getvalue().strip(), box['error'], elapsed))
+            break
+        else:
+            results.append((input_repr, json.dumps(_to_json(box['output'])), buf.getvalue().strip(), None, elapsed))
     return results
 
 
@@ -1285,7 +1320,7 @@ class LeetcodeRunCommand(sublime_plugin.TextCommand):
             else:
                 example = test_data.get('exampleTestcases', '')
                 testcases = _parse_testcases(example, json.dumps(meta_obj))
-            results = _run_offline(code, testcases, func_name, fp)
+            results = _run_offline(code, testcases, func_name, fp, timeout=_run_timeout())
             in_path = base + '_in.json'
             out_path = base + '_out.json'
             expected_outputs = None
@@ -1295,7 +1330,9 @@ class LeetcodeRunCommand(sublime_plugin.TextCommand):
             _, fname = os.path.split(fp)
             lines = ['=' * 50, '  LeetCode Offline Judge -- ' + fname, '=' * 50, '']
             passed = 0
-            for i, (inp, out, stdout, err) in enumerate(results, 1):
+            total_time = 0.0
+            for i, (inp, out, stdout, err, elapsed) in enumerate(results, 1):
+                total_time += elapsed
                 lines.append('Test ' + str(i) + ':')
                 if err:
                     lines.append('  INPUT  ' + str(inp))
@@ -1307,6 +1344,7 @@ class LeetcodeRunCommand(sublime_plugin.TextCommand):
                     if stdout:
                         lines.append('  STDOUT\n' + stdout)
                     lines.append('  OUTPUT ' + str(out))
+                    lines.append('  TIME   ' + _fmt_time(elapsed))
                     if expected_outputs and i <= len(expected_outputs):
                         exp = expected_outputs[i - 1]
                         try:
@@ -1315,10 +1353,15 @@ class LeetcodeRunCommand(sublime_plugin.TextCommand):
                             match = out_val == exp_val
                         except Exception:
                             match = str(out).strip() == str(exp).strip()
-                        lines.append('  EXPECT ' + str(exp) + ('  OK' if match else '  FAIL'))
+                        try:
+                            exp_repr = json.dumps(exp, ensure_ascii=False)
+                        except Exception:
+                            exp_repr = str(exp)
+                        lines.append('  EXPECT ' + exp_repr + ('  OK' if match else '  FAIL'))
                         if match: passed += 1
                 lines.append('')
             lines.append(str(passed) + '/' + str(len(results)) + ' passed.')
+            lines.append('Total time: ' + _fmt_time(total_time))
             lines.append('=' * 50)
             return '\n'.join(lines)
 
@@ -1393,7 +1436,8 @@ class LeetcodeSubmitCommand(sublime_plugin.TextCommand):
                 if r.get('std_output'):
                     lines.append('Stdout:')
                     lines.append(r['std_output'])
-                    # 追加到本地 _in/_out
+                # 追加失败的用例到本地 _in/_out（不依赖 std_output）
+                if r.get('last_testcase') and r.get('expected_output'):
                     try:
                         base = fp[:-(len(ext) + 1)]
                         in_path = base + '_in.json'

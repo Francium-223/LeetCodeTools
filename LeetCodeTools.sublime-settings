@@ -3,5 +3,6 @@
     "default_lang": "python3",
     "language": "zh",
     "site": "cn",
-    "cache_age_days": 7
+    "cache_age_days": 7,
+    "run_timeout": 1
 }
