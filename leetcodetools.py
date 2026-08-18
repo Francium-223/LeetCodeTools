@@ -485,7 +485,7 @@ class LeetCodeToolsClient:
                 results.append(p)
         return results
 
-    def fetch_problem(self, question_id, lang='python3', working_dir=None, force=False):
+    def fetch_problem(self, question_id, lang='python3', working_dir=None, force=False, study_plan_slug=None):
         if working_dir is None:
             working_dir = _working_dir()
         problems = self._load_cache()
@@ -571,6 +571,7 @@ class LeetCodeToolsClient:
                 'difficulty': difficulty,
                 'exampleTestcases': detail.get('exampleTestcases', ''),
                 'metaData': detail.get('metaData', ''),
+                'study_plan_slug': study_plan_slug or '',
             }, f, ensure_ascii=False, indent=2)
 
         # Interpret: 插 return 桩 → Run Code → 抓预期输出
@@ -624,14 +625,17 @@ class LeetCodeToolsClient:
             'in_path': in_path, 'out_path': out_path,
         }
 
-    def submit_code(self, problem_slug, question_id, lang_slug, typed_code):
+    def submit_code(self, problem_slug, question_id, lang_slug, typed_code, study_plan_slug=None):
         base_url = _base_url()
         url = base_url + '/problems/' + problem_slug + '/submit/'
-        payload = json.dumps({
+        body = {
             'lang': lang_slug,
             'question_id': str(question_id),
-            'typed_code': typed_code
-        }).encode()
+            'typed_code': typed_code,
+        }
+        if study_plan_slug:
+            body['study_plan_slug'] = study_plan_slug
+        payload = json.dumps(body).encode()
         headers = {
             'Content-Type': 'application/json',
             'Cookie': self.cookie_raw,
@@ -1860,10 +1864,11 @@ class LeetcodeSubmitCommand(sublime_plugin.TextCommand):
             if not title_slug or not question_id:
                 raise ValueError('Missing titleSlug or questionId in JSON.')
             lang_slug = EXT_LANG.get(ext, ext)
+            study_plan_slug = test_data.get('study_plan_slug', '')
             with open(fp, 'r', encoding='utf-8') as f:
                 code = f.read()
             client = _build_client()
-            sid = client.submit_code(title_slug, question_id, lang_slug, code)
+            sid = client.submit_code(title_slug, question_id, lang_slug, code, study_plan_slug=study_plan_slug)
             result = None
             sublime.status_message('LeetCodeTools: Submitting...')
             result = client.check_submission(sid)
@@ -2088,17 +2093,17 @@ class LeetcodeProblemSetCommand(sublime_plugin.WindowCommand):
 
             def on_select(idx):
                 if idx >= 0:
-                    self._fetch_and_open(problems[idx]['frontendQuestionId'])
+                    self._fetch_and_open(problems[idx]['frontendQuestionId'], plan_slug)
 
             self.window.show_quick_panel(items, on_select)
 
         _run_in_thread(self.window, work, _on_done=done)
 
-    def _fetch_and_open(self, fid):
+    def _fetch_and_open(self, fid, plan_slug=None):
         def fetch_and_open(window):
             sublime.status_message('LeetCode Tools: Fetching #' + str(fid) + '...')
             client = _build_client()
-            return client.fetch_problem(fid)
+            return client.fetch_problem(fid, study_plan_slug=plan_slug)
 
         def done_fetch(window, result):
             if result:
