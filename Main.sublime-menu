@@ -13,9 +13,10 @@
                         "caption": "LeetCodeTools",
                         "children": [
                             {
-                                "command": "open_file",
+                                "command": "edit_settings",
                                 "args": {
-                                    "file": "${packages}/LeetCodeTools/LeetCodeTools.sublime-settings"
+                                    "base_file": "${packages}/LeetCodeTools/LeetCodeTools.sublime-settings",
+                                    "default": "{}"
                                 },
                                 "caption": "Settings"
                             },

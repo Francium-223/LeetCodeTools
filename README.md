@@ -19,6 +19,7 @@ LeetCodeTools 是一个 [Sublime Text](https://www.sublimetext.com/) 插件，�
 | `LeetCode Tools: Open in Browser` | Open the current problem's page in the browser. 在浏览器打开当前题目的网页 |
 | `LeetCode Tools: Fetch Official Explanations` | Fetch the official solution as `xxx_explanation.md`. 拉取官方题解为 `xxx_explanation.md` |
 | `LeetCode Tools: Select from Problem Set` | Pick a problem from a study plan (Hot 100, Top Interview 150, …). 从题集（热题100 / 面试经典150题等学习计划）里选题 |
+| `LeetCode Tools: Daily Question` | Fetch today's daily question. 拉取今日的每日一题 |
 
 ## Installation / 安装
 
@@ -53,6 +54,7 @@ Edit `LeetCodeTools.sublime-settings`:
 | `language` | `zh` | Problem language (`zh` / `en`). 题目语言（`zh` / `en`） |
 | `site` | `cn` | `cn` = leetcode.cn, `com` = leetcode.com |
 | `cache_age_days` | `7` | Cache age in days for the problem list and study plans; auto-refreshes when expired. 题目列表与题集的缓存天数，过期自动刷新 |
+| `run_timeout` | `1` | Time limit in seconds for the offline Run (0 = no limit). 离线 Run 的超时秒数（0 表示不限时） |
 
 ## Supported languages / 支持的语言
 
@@ -109,6 +111,8 @@ Each problem generates these files under `working_dir`:
 | `{slug}_in.json` | Parsed input cases. 解析后的输入用例 |
 | `{slug}_out.json` | Expected outputs. 预期输出 |
 | `{slug}_explanation.md` | Official solution (from Fetch Official Explanations). 官方题解（由 Fetch Official Explanations 生成） |
+| `{slug}_images/` | Images downloaded from the problem description. 题目描述里下载的本地图片 |
+| `{slug}_explanation_images/` | Images downloaded from the official solution. 官方题解里下载的本地图片 |
 
 ## Current limitations / 当前限制
 
@@ -137,5 +141,5 @@ LeetCodeTools/
 
 - The login cookie is cached at `~/.leetcode_tools_cache/cookie.json`; the problem list at `~/.leetcode_tools_cache/problem_list.json`; study plans at `~/.leetcode_tools_cache/study_plans.json` and `~/.leetcode_tools_cache/study_plan_problems.json`.
   登录 Cookie 缓存在 `~/.leetcode_tools_cache/cookie.json`，题目列表缓存在 `~/.leetcode_tools_cache/problem_list.json`，题集缓存在 `~/.leetcode_tools_cache/study_plans.json` 和 `~/.leetcode_tools_cache/study_plan_problems.json`。
-- Images in official solutions are full URLs and work directly; videos are signed, temporary cover links that may expire (a LeetCode limitation).
-  官方题解里的图片是完整链接、可直接使用；题解里的视频是带签名的临时封面链接，可能随时间过期（力扣的机制限制）。
+- Images in problem descriptions and official solutions are downloaded locally (into `{slug}_images/` and `{slug}_explanation_images/`), so you can view them without opening a browser.
+  题目描述和官方题解里的图片会下载到本地（`{slug}_images/` 和 `{slug}_explanation_images/`），看图不用开浏览器。
