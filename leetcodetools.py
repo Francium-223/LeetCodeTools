@@ -1245,7 +1245,7 @@ def _run_offline(code_str, testcases, func_name, filename='<string>', timeout=No
 
 
 _OFFLINE_RUNNER = r'''"""LeetCode Tools offline judge runner. 由系统 Python 运行，超时会被 kill。"""
-import sys, json, io, contextlib, traceback, time, threading, re, ast
+import sys, os, json, io, contextlib, traceback, time, threading, re, ast
 
 
 class ListNode:
@@ -1421,6 +1421,17 @@ def _emit(obj):
     sys.__stdout__.flush()
 
 
+def _user_error_text():
+    # 只保留用户代码自己的堆栈帧，过滤掉 runner 自身（offline_runner.py）的帧，
+    # 这样报错会直接指向用户文件的行号，而不是 <solution> / offline_runner.py。
+    exc_type, exc_value, tb = sys.exc_info()
+    te = traceback.TracebackException(exc_type, exc_value, tb)
+    runner_file = os.path.realpath(__file__)
+    kept = [f for f in te.stack if os.path.realpath(f.filename) != runner_file]
+    te.stack = traceback.StackSummary.from_list(kept)
+    return ''.join(te.format())
+
+
 def main():
     payload = json.load(sys.stdin)
     code = payload.get('code', '')
@@ -1432,11 +1443,12 @@ def main():
         'ListNode': ListNode, 'TreeNode': TreeNode, 'Node': Node,
         '_build_list': _build_list, '_build_tree': _build_tree, '_build_graph': _build_graph,
     }
+    filename = payload.get('filename') or '<solution>'
     try:
         exec('from typing import *', namespace)
-        exec(compile(code, '<solution>', 'exec'), namespace)
+        exec(compile(code, filename, 'exec'), namespace)
     except Exception:
-        _emit({'error': 'Compile/Exec Error:\n' + traceback.format_exc()})
+        _emit({'error': 'Compile/Exec Error:\n' + _user_error_text()})
         return
 
     func = _find_func(namespace, func_name)
@@ -1468,7 +1480,7 @@ def main():
                 with contextlib.redirect_stdout(buf):
                     box['output'] = func(*args)
             except BaseException:
-                box['error'] = traceback.format_exc()
+                box['error'] = _user_error_text()
 
         th = threading.Thread(target=run_one, daemon=True)
         t0 = time.time()
@@ -1506,13 +1518,12 @@ def _offline_runner_path():
 def _ensure_offline_runner():
     path = _offline_runner_path()
     os.makedirs(_cache_dir(), exist_ok=True)
-    if not os.path.exists(path):
-        with open(path, 'w', encoding='utf-8') as f:
-            f.write(_OFFLINE_RUNNER)
+    with open(path, 'w', encoding='utf-8') as f:
+        f.write(_OFFLINE_RUNNER)
     return path
 
 
-def _run_offline_subprocess(code, raw_tc, types, func_name, timeout, example='', meta_str='{}', mode='raw'):
+def _run_offline_subprocess(code, raw_tc, types, func_name, timeout, example='', meta_str='{}', mode='raw', filename=None):
     """在子进程里跑离线判题（可 kill 死循环）。返回 5 元组结果列表。"""
     python_exe = _find_system_python()
     runner = _ensure_offline_runner()
@@ -1525,6 +1536,7 @@ def _run_offline_subprocess(code, raw_tc, types, func_name, timeout, example='',
         'types': types,
         'example': example,
         'meta_str': meta_str,
+        'filename': filename,
     }
     body = json.dumps(payload, ensure_ascii=False).encode('utf-8')
 
@@ -1766,12 +1778,12 @@ class LeetcodeRunCommand(sublime_plugin.TextCommand):
                     else:
                         types.append(params[j].get('type', '') if j < len(params) else '')
                 results = _run_offline_subprocess(
-                    code, raw_tc, types, func_name, timeout, mode='raw')
+                    code, raw_tc, types, func_name, timeout, mode='raw', filename=fp)
             else:
                 example = test_data.get('exampleTestcases', '')
                 results = _run_offline_subprocess(
                     code, [], [], func_name, timeout,
-                    example=example, meta_str=json.dumps(meta_obj), mode='example')
+                    example=example, meta_str=json.dumps(meta_obj), mode='example', filename=fp)
             in_path = base + '_in.json'
             out_path = base + '_out.json'
             expected_outputs = None

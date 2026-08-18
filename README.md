@@ -128,6 +128,8 @@ Each problem generates these files under `working_dir`:
 
 - [ ] Separate the parser (test-case parsing + linked-list/tree/graph building + offline judge) out of `leetcodetools.py` into a standalone module/script, so it can run from the command line outside Sublime (e.g. `python -m leetcodetools_offline solution.py`).
   把 parser（用例解析 + 链表/树/图构建 + 离线判题）从 `leetcodetools.py` 里分离成独立模块 / 脚本，使其可以脱离 Sublime、在命令行本地执行（例如 `python -m leetcodetools_offline solution.py`）。
+- [ ] Class / design problems (e.g. **Min Stack**, where you implement a class with multiple methods) are not supported by the offline Run yet.
+  「最小栈」这类 class 设计题（需要实现一个类、多个方法）暂不支持本地 Run。
 
 ## Directory structure / 目录结构
 
