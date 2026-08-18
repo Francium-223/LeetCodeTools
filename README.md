@@ -44,8 +44,8 @@ LeetCodeTools 是一个 [Sublime Text](https://www.sublimetext.com/) 插件，�
 
 ## Configuration / 配置
 
-Edit `LeetCodeTools.sublime-settings`:
-编辑 `LeetCodeTools.sublime-settings`：
+Settings are edited via `Preferences: LeetCodeTools Settings` in the command palette, or `Preferences → Package Settings → LeetCodeTools → Settings` in the menu:
+设置通过命令面板的 `Preferences: LeetCodeTools Settings`，或菜单 `Preferences → Package Settings → LeetCodeTools → Settings` 编辑：
 
 | Key 配置项 | Default 默认值 | Description 说明 |
 |--------|--------|------|
