@@ -96,10 +96,16 @@ def _cache_is_fresh(cache_path):
         return False
 
 
-# ── 找到系统 Python 3.14 exe，用于跑 cookie_grabber.py ──
+# ── 找到系统 Python，用于跑 cookie_grabber.py / offline_runner ──
+
+_SYSTEM_PYTHON = None
+
 
 def _find_system_python():
-    """找到系统较高版本 Python。"""
+    """找到系统较高版本 Python（带缓存，且隐藏控制台窗口）。"""
+    global _SYSTEM_PYTHON
+    if _SYSTEM_PYTHON:
+        return _SYSTEM_PYTHON
     import glob
     candidates = [
         os.path.expandvars(r'%LOCALAPPDATA%\Python\bin\python3.exe'),
@@ -109,14 +115,21 @@ def _find_system_python():
         candidates.extend(glob.glob(os.path.expandvars(pat)))
     candidates.append('python3')
     candidates.append('python')
+    kwargs = {}
+    if os.name == 'nt':
+        kwargs['creationflags'] = subprocess.CREATE_NO_WINDOW
     for p in candidates:
         try:
-            ver = subprocess.check_output([p, '--version'], stderr=subprocess.STDOUT, timeout=5).decode()
+            ver = subprocess.check_output([p, '--version'], stderr=subprocess.STDOUT, timeout=5, **kwargs).decode()
             if '3.' in ver:
+                _SYSTEM_PYTHON = p
                 return p
         except Exception:
             continue
-    return 'python'
+    raise RuntimeError(
+        'No system Python 3 found. Please install Python 3 and add it to PATH '
+        '(required by Login and the offline Run).'
+    )
 
 
 LANG_EXT = {
@@ -1231,6 +1244,334 @@ def _run_offline(code_str, testcases, func_name, filename='<string>', timeout=No
     return results
 
 
+_OFFLINE_RUNNER = r'''"""LeetCode Tools offline judge runner. 由系统 Python 运行，超时会被 kill。"""
+import sys, json, io, contextlib, traceback, time, threading, re, ast
+
+
+class ListNode:
+    def __init__(self, val=0, next=None):
+        self.val = val
+        self.next = next
+
+
+class TreeNode:
+    def __init__(self, val=0, left=None, right=None):
+        self.val = val
+        self.left = left
+        self.right = right
+
+
+class Node:
+    def __init__(self, val=0, neighbors=None):
+        self.val = val
+        self.neighbors = neighbors if neighbors else []
+
+
+def _build_list(arr):
+    if not arr:
+        return None
+    nodes = [ListNode(v) for v in arr]
+    for i in range(len(nodes) - 1):
+        nodes[i].next = nodes[i + 1]
+    return nodes[0]
+
+
+def _build_tree(arr):
+    if not arr or arr[0] is None:
+        return None
+    root = TreeNode(arr[0])
+    q = [root]
+    i = 1
+    while q and i < len(arr):
+        node = q.pop(0)
+        if i < len(arr) and arr[i] is not None:
+            node.left = TreeNode(arr[i])
+            q.append(node.left)
+        i += 1
+        if i < len(arr) and arr[i] is not None:
+            node.right = TreeNode(arr[i])
+            q.append(node.right)
+        i += 1
+    return root
+
+
+def _build_graph(adj_list):
+    if not adj_list:
+        return None
+    nodes = [Node(i + 1) for i in range(len(adj_list))]
+    for i, nbrs in enumerate(adj_list):
+        nodes[i].neighbors = [nodes[n - 1] for n in nbrs]
+    return nodes[0] if nodes else None
+
+
+def _from_json(val, ptype):
+    ptype = (ptype or '').lower()
+    if 'listnode' in ptype:
+        return _build_list(val)
+    if 'treenode' in ptype:
+        return _build_tree(val)
+    if ptype == 'node' or 'graph' in ptype:
+        return _build_graph(val)
+    return val
+
+
+def _to_json(val):
+    if isinstance(val, ListNode):
+        result = []
+        cur = val
+        while cur:
+            result.append(cur.val)
+            cur = cur.next
+        return result
+    if isinstance(val, TreeNode):
+        if val is None:
+            return None
+        result = []
+        q = [val]
+        while q:
+            node = q.pop(0)
+            if node:
+                result.append(node.val)
+                q.append(node.left)
+                q.append(node.right)
+            else:
+                result.append(None)
+        while result and result[-1] is None:
+            result.pop()
+        return result
+    if isinstance(val, Node):
+        adj = {}
+        visited = set()
+        stack = [val]
+        while stack:
+            cur = stack.pop()
+            if id(cur) in visited:
+                continue
+            visited.add(id(cur))
+            adj[cur.val] = [n.val for n in cur.neighbors]
+            for n in cur.neighbors:
+                if id(n) not in visited:
+                    stack.append(n)
+        return [adj[i] for i in sorted(adj)]
+    if isinstance(val, list):
+        return [_to_json(v) for v in val]
+    return val
+
+
+def _parse_testcases(example_testcases, meta_data_str):
+    if not example_testcases or not example_testcases.strip():
+        return []
+    meta = json.loads(meta_data_str) if meta_data_str else {}
+    params = meta.get('params', [])
+    param_count = len(params) or 1
+    lines = example_testcases.strip().split('\n')
+    lines = [l.strip() for l in lines if l.strip()]
+
+    def _parse_value(raw, param_info):
+        val = json.loads(raw)
+        ptype = (param_info or {}).get('type', '')
+        if 'ListNode' in ptype or 'listnode' in ptype.lower():
+            return _build_list(val)
+        if 'TreeNode' in ptype or 'treenode' in ptype.lower():
+            return _build_tree(val)
+        if 'Node' in ptype or 'node' == ptype.lower() or 'graph' in ptype.lower():
+            return _build_graph(val)
+        return val
+
+    testcases = []
+    i = 0
+    while i < len(lines):
+        args = []
+        for j in range(param_count):
+            if i + j < len(lines):
+                try:
+                    args.append(_parse_value(lines[i + j], params[j] if j < len(params) else {}))
+                except Exception:
+                    try:
+                        args.append(ast.literal_eval(lines[i + j]))
+                    except Exception:
+                        args.append(lines[i + j])
+            else:
+                args.append(None)
+        testcases.append(tuple(args))
+        i += param_count
+    return testcases
+
+
+def _find_func(namespace, func_name):
+    func = namespace.get(func_name)
+    if func is not None:
+        return func
+    for v in namespace.values():
+        if isinstance(v, type) and hasattr(v, func_name):
+            return getattr(v(), func_name)
+    for v in namespace.values():
+        if callable(v) and not getattr(v, '__name__', '').startswith('_'):
+            name = getattr(v, '__name__', '')
+            if name in ('_build_list', '_build_tree', '_build_graph', func_name):
+                continue
+            if isinstance(v, type):
+                continue
+            return v
+    return None
+
+
+def _emit(obj):
+    sys.__stdout__.write(json.dumps(obj, ensure_ascii=False) + '\n')
+    sys.__stdout__.flush()
+
+
+def main():
+    payload = json.load(sys.stdin)
+    code = payload.get('code', '')
+    func_name = payload.get('func_name', '')
+    timeout = payload.get('timeout') or 0
+    mode = payload.get('mode', 'raw')
+
+    namespace = {
+        'ListNode': ListNode, 'TreeNode': TreeNode, 'Node': Node,
+        '_build_list': _build_list, '_build_tree': _build_tree, '_build_graph': _build_graph,
+    }
+    try:
+        exec('from typing import *', namespace)
+        exec(compile(code, '<solution>', 'exec'), namespace)
+    except Exception:
+        _emit({'error': 'Compile/Exec Error:\n' + traceback.format_exc()})
+        return
+
+    func = _find_func(namespace, func_name)
+    if func is None:
+        _emit({'error': 'Function "' + func_name + '" not found in code.'})
+        return
+
+    if mode == 'example':
+        testcases = _parse_testcases(payload.get('example', ''), payload.get('meta_str', '{}'))
+    else:
+        raw_tc = payload.get('raw_tc', [])
+        types = payload.get('types', [])
+        testcases = []
+        for tc in raw_tc:
+            args = []
+            for j, v in enumerate(tc):
+                ptype = types[j] if j < len(types) else ''
+                args.append(_from_json(v, ptype))
+            testcases.append(tuple(args))
+
+    results = []
+    for args in testcases:
+        input_repr = ', '.join(json.dumps(_to_json(a), default=str) for a in args)
+        buf = io.StringIO()
+        box = {}
+
+        def run_one():
+            try:
+                with contextlib.redirect_stdout(buf):
+                    box['output'] = func(*args)
+            except BaseException:
+                box['error'] = traceback.format_exc()
+
+        th = threading.Thread(target=run_one, daemon=True)
+        t0 = time.time()
+        th.start()
+        if timeout and timeout > 0:
+            th.join(timeout)
+        else:
+            th.join()
+        elapsed = time.time() - t0
+
+        if th.is_alive():
+            results.append({'input': input_repr, 'output': '', 'stdout': buf.getvalue(),
+                            'error': 'Time Limit Exceeded', 'elapsed': elapsed})
+            break
+        elif 'error' in box:
+            results.append({'input': input_repr, 'output': '', 'stdout': buf.getvalue(),
+                            'error': box['error'], 'elapsed': elapsed})
+            break
+        else:
+            results.append({'input': input_repr, 'output': json.dumps(_to_json(box['output'])),
+                            'stdout': buf.getvalue(), 'error': None, 'elapsed': elapsed})
+
+    _emit({'results': results})
+
+
+if __name__ == '__main__':
+    main()
+'''
+
+
+def _offline_runner_path():
+    return os.path.join(_cache_dir(), 'offline_runner.py')
+
+
+def _ensure_offline_runner():
+    path = _offline_runner_path()
+    os.makedirs(_cache_dir(), exist_ok=True)
+    if not os.path.exists(path):
+        with open(path, 'w', encoding='utf-8') as f:
+            f.write(_OFFLINE_RUNNER)
+    return path
+
+
+def _run_offline_subprocess(code, raw_tc, types, func_name, timeout, example='', meta_str='{}', mode='raw'):
+    """在子进程里跑离线判题（可 kill 死循环）。返回 5 元组结果列表。"""
+    python_exe = _find_system_python()
+    runner = _ensure_offline_runner()
+    payload = {
+        'code': code,
+        'func_name': func_name,
+        'timeout': timeout,
+        'mode': mode,
+        'raw_tc': raw_tc,
+        'types': types,
+        'example': example,
+        'meta_str': meta_str,
+    }
+    body = json.dumps(payload, ensure_ascii=False).encode('utf-8')
+
+    safety = None
+    if timeout and timeout > 0:
+        safety = timeout * 50 + 15
+
+    proc = None
+    popen_kwargs = {}
+    if os.name == 'nt':
+        popen_kwargs['creationflags'] = subprocess.CREATE_NO_WINDOW
+    try:
+        proc = subprocess.Popen(
+            [python_exe, runner],
+            stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+            **popen_kwargs
+        )
+        out, err = proc.communicate(body, timeout=safety)
+    except subprocess.TimeoutExpired:
+        if proc is not None:
+            proc.kill()
+            proc.communicate()
+        raise Exception('Offline judge timed out (killed).')
+    except Exception as e:
+        raise Exception('Failed to run offline judge:\n' + str(e))
+
+    if proc.returncode != 0:
+        raise Exception('Offline judge failed:\n' + (err.decode('utf-8', 'replace') if err else ''))
+
+    try:
+        data = json.loads(out.decode('utf-8', 'replace'))
+    except Exception:
+        raise Exception('Offline judge returned invalid output.')
+
+    if data.get('error'):
+        raise Exception(data['error'])
+
+    results = data.get('results', [])
+    return [(
+        r.get('input', ''),
+        r.get('output', ''),
+        r.get('stdout', ''),
+        r.get('error'),
+        r.get('elapsed', 0.0),
+    ) for r in results]
+
+
 # ==================== Sublime 命令 ====================
 
 def _show_output(window, name, text):
@@ -1410,26 +1751,27 @@ class LeetcodeRunCommand(sublime_plugin.TextCommand):
             # manual 题用函数签名类型，否则用 metaData 类型
             manual = meta_obj.get('manual', False)
             sig_types = _parse_signature_types(code)
+            params = meta_obj.get('params', [])
+            timeout = _run_timeout()
             # 优先用 _in.json（含手动追加的失败用例）
             in_path = base + '_in.json'
             if os.path.exists(in_path):
                 with open(in_path, encoding='utf-8') as f:
                     raw_tc = json.load(f)
-                params = meta_obj.get('params', [])
-                testcases = []
-                for tc in raw_tc:
-                    args = []
-                    for j, v in enumerate(tc):
-                        if manual and j < len(sig_types):
-                            ptype = sig_types[j]
-                        else:
-                            ptype = params[j].get('type', '') if j < len(params) else ''
-                        args.append(_from_json(v, ptype))
-                    testcases.append(tuple(args))
+                max_args = max((len(tc) for tc in raw_tc), default=0)
+                types = []
+                for j in range(max_args):
+                    if manual and j < len(sig_types):
+                        types.append(sig_types[j])
+                    else:
+                        types.append(params[j].get('type', '') if j < len(params) else '')
+                results = _run_offline_subprocess(
+                    code, raw_tc, types, func_name, timeout, mode='raw')
             else:
                 example = test_data.get('exampleTestcases', '')
-                testcases = _parse_testcases(example, json.dumps(meta_obj))
-            results = _run_offline(code, testcases, func_name, fp, timeout=_run_timeout())
+                results = _run_offline_subprocess(
+                    code, [], [], func_name, timeout,
+                    example=example, meta_str=json.dumps(meta_obj), mode='example')
             in_path = base + '_in.json'
             out_path = base + '_out.json'
             expected_outputs = None

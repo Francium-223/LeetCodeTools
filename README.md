@@ -29,14 +29,17 @@ LeetCodeTools 是一个 [Sublime Text](https://www.sublimetext.com/) 插件，�
 2. Press `Ctrl+Shift+P` (`Cmd+Shift+P` on macOS), run `Package Control: Install Package`, search for `LeetCodeTools`, and press Enter to install.
    按 `Ctrl+Shift+P`（macOS 为 `Cmd+Shift+P`），运行 `Package Control: Install Package`，搜索 `LeetCodeTools` 并回车安装。
 
-3. To use **Login**, install `DrissionPage` into your system Python and make sure Chrome or Edge is installed:
-   要使用**登录**功能，请在系统 Python 里安装 `DrissionPage`，并确保装有 Chrome 或 Edge：
+3. Install a system **Python 3** and add it to PATH. It is required by Login and the offline Run.
+   安装一个系统 **Python 3** 并加入 PATH。登录和离线 Run 都需要它。
+
+4. To use **Login**, install `DrissionPage` into that Python and make sure Chrome or Edge is installed:
+   要使用**登录**功能，请在该 Python 里安装 `DrissionPage`，并确保装有 Chrome 或 Edge：
 
    ```bash
    pip install DrissionPage
    ```
 
-4. Press `Ctrl+Shift+P`, run `LeetCode Tools: Login`, log in in the browser, then click OK.
+5. Press `Ctrl+Shift+P`, run `LeetCode Tools: Login`, log in in the browser, then click OK.
    按 `Ctrl+Shift+P`，运行 `LeetCode Tools: Login`，在浏览器里登录后点确定即可。
 
 > Note: Search / Fetch / Update / Submit need the login cookie; Open in Browser, Run, and Fetch Official Explanations do not (the official solution uses the public GraphQL API).
