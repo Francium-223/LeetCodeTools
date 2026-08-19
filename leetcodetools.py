@@ -96,7 +96,7 @@ def _cache_is_fresh(cache_path):
         return False
 
 
-# ── 找到系统 Python，用于跑 cookie_grabber.py / offline_runner ──
+# ── 找到系统 Python，用于跑 offline_runner ──
 
 _SYSTEM_PYTHON = None
 
@@ -272,84 +272,64 @@ def _clean_solution_markdown(md, videos=None):
 
 # ==================== Cookie & API helpers ====================
 
-def _grabber_path():
-    return os.path.join(_cache_dir(), 'cookie_grabber.py')
-
-
-def _cookie_login():
-    """后台跑 cookie_grabber.py，等信号触发抓 Cookie。"""
-    python_exe = _find_system_python()
-    script = _grabber_path()
-    err_file = os.path.join(_cache_dir(), '.grabber_err.txt')
+def _save_cookie_from_text(text):
+    """解析用户粘贴的 Cookie（完整 Cookie 头 / LEETCODE_SESSION=... / 单独的 session 值）。"""
+    text = (text or '').strip().strip(';').strip()
+    if not text:
+        raise ValueError('Cookie is empty.')
+    # 去掉可能带上的 "Cookie:" 前缀
+    if text.lower().startswith('cookie:'):
+        text = text[7:].strip()
+    # 换行 / 多余空白统一成单个空格（避免换行把值弄坏）
+    text = ' '.join(text.split())
+    pairs = {}
+    lower = text.lower()
+    if ';' in text or 'sl-session=' in lower or 'csrftoken=' in lower or 'leetcode_session=' in lower:
+        for part in text.split(';'):
+            part = part.strip()
+            if '=' not in part:
+                continue
+            k, v = part.split('=', 1)
+            k = k.strip()
+            v = v.strip().strip('"').strip()
+            if k:
+                pairs[k] = v
+    session = pairs.get('LEETCODE_SESSION') or pairs.get('sl-session')
+    if not session:
+        # 只贴了值（不带 key），当作 LEETCODE_SESSION
+        session = text.strip('"').strip()
+        pairs['LEETCODE_SESSION'] = session
+    if not session:
+        raise ValueError('No session cookie found. Paste the whole Cookie header.')
+    data = {
+        'LEETCODE_SESSION': pairs.get('LEETCODE_SESSION', ''),
+        'sl-session': pairs.get('sl-session', ''),
+        'csrftoken': pairs.get('csrftoken', ''),
+        'all': pairs,
+    }
     os.makedirs(_cache_dir(), exist_ok=True)
-    sublime.status_message('LeetCode Tools: Opening browser...')
-    popen_kwargs = {}
-    if os.name == 'nt':
-        startupinfo = subprocess.STARTUPINFO()
-        startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
-        startupinfo.wShowWindow = subprocess.SW_HIDE
-        popen_kwargs['startupinfo'] = startupinfo
-    subprocess.Popen(
-        [python_exe, script, '--cache-dir', _cache_dir()],
-        stderr=open(err_file, 'w'),
-        **popen_kwargs
-    )
-
-    # 等 2 秒检查进程是否还活着
-    def check_alive():
-        err_path = err_file
-        if os.path.exists(err_path) and os.path.getsize(err_path) > 0:
-            with open(err_path) as f:
-                err_text = f.read().strip()
-            if err_text:
-                sublime.error_message('Cookie grabber error:\n' + err_text)
-                return
-        # 还没错误但也没 cookie → 可能是浏览器还没打开
-        sublime.set_timeout(_check_cookie_or_error, 2000)
-
-    sublime.set_timeout(check_alive, 2000)
-
-
-def _signal_login_ready():
-    """写信号文件，通知 cookie_grabber 抓 Cookie。"""
-    signal_file = os.path.join(_cache_dir(), '.login_ready')
-    with open(signal_file, 'w') as f:
-        f.write('ok')
-
-
-def _check_cookie_ready():
-    """轮询检查 cookie.json 是否已写入。"""
-    if os.path.exists(_cookie_cache_path()):
-        sublime.status_message('LeetCodeTools: Login successful!')
-    else:
-        sublime.set_timeout(_check_cookie_ready, 500)
-
-
-def _check_cookie_or_error():
-    err_file = os.path.join(_cache_dir(), '.grabber_err.txt')
-    if os.path.exists(err_file) and os.path.getsize(err_file) > 0:
-        with open(err_file) as f:
-            sublime.error_message('Cookie grabber error:\n' + f.read().strip())
-    elif not os.path.exists(_cookie_cache_path()):
-        sublime.set_timeout(_check_cookie_or_error, 1000)
-    # 有 cookie 就静默成功
+    with open(_cookie_cache_path(), 'w', encoding='utf-8') as f:
+        json.dump(data, f, ensure_ascii=False)
+    return data
 
 
 def _validate_cookie(cookie_dict):
+    """用需要登录的查询验证会话：todayRecord.userStatus 匿名时为 null。"""
     try:
-        raw = 'sl-session="' + cookie_dict['sl-session'] + '"'
-        if cookie_dict.get('csrftoken'):
-            raw += '; csrftoken=' + cookie_dict['csrftoken']
+        all_cookies = cookie_dict.get('all', {})
+        raw = '; '.join(k + '=' + v for k, v in all_cookies.items())
+        if not raw:
+            session = cookie_dict.get('LEETCODE_SESSION') or cookie_dict.get('sl-session') or ''
+            raw = 'LEETCODE_SESSION=' + session
         req = urllib.request.Request(
             'https://leetcode.cn/graphql/',
-            data=json.dumps({
-                'query': 'query { question(titleSlug:"two-sum") { questionId } }'
-            }).encode(),
+            data=json.dumps({'query': 'query { todayRecord { userStatus } }'}).encode(),
             headers={'Content-Type': 'application/json', 'Cookie': raw, 'User-Agent': 'Mozilla/5.0'}
         )
         resp = urllib.request.urlopen(req, timeout=10)
         data = json.loads(resp.read())
-        return data.get('data', {}).get('question', {}).get('questionId') is not None
+        rec = (data.get('data', {}).get('todayRecord') or [{}])[0]
+        return rec.get('userStatus') is not None
     except Exception:
         return False
 
@@ -361,7 +341,32 @@ def get_leetcode_cookie():
             cached = json.load(f)
         if _validate_cookie(cached):
             return cached
-    raise RuntimeError('No valid cookie. Run "LeetCode: Login" first.')
+    raise RuntimeError('No valid cookie. Run "LeetCode Tools: Login" first — it opens the browser and asks you to paste the LEETCODE_SESSION cookie.')
+
+
+def _fetch_csrftoken(cookie_raw=''):
+    """通过 nojGlobalData 获取 csrftoken（带登录会话，尽量和会话匹配）。"""
+    try:
+        headers = {
+            'Content-Type': 'application/json',
+            'User-Agent': 'Mozilla/5.0',
+            'Origin': 'https://leetcode.cn',
+            'Referer': 'https://leetcode.cn/',
+        }
+        if cookie_raw:
+            headers['Cookie'] = cookie_raw
+        req = urllib.request.Request(
+            'https://leetcode.cn/graphql/',
+            data=json.dumps({'query': 'query nojGlobalData { siteRegion }'}).encode(),
+            headers=headers,
+        )
+        resp = urllib.request.urlopen(req, timeout=10)
+        for h in (resp.headers.get_all('Set-Cookie') or []):
+            if h.lower().startswith('csrftoken='):
+                return h.split('=', 1)[1].split(';', 1)[0]
+    except Exception:
+        pass
+    return ''
 
 
 def _build_client():
@@ -372,10 +377,18 @@ def _build_client():
         parts.append(k + '=' + v)
     raw = '; '.join(parts)
     if not raw:
-        raw = 'sl-session="' + cookie_dict['sl-session'] + '"'
+        session = cookie_dict.get('LEETCODE_SESSION') or cookie_dict.get('sl-session') or ''
+        raw = 'LEETCODE_SESSION=' + session
         if cookie_dict.get('csrftoken'):
             raw += '; csrftoken=' + cookie_dict['csrftoken']
-    return LeetCodeToolsClient(raw)
+    client = LeetCodeToolsClient(raw)
+    # 只粘了 sl-session、缺 csrftoken 时，自动补一个（带会话去拉）
+    if not client.csrf_token:
+        csrf = _fetch_csrftoken(client.cookie_raw)
+        if csrf:
+            client.csrf_token = csrf
+            client.cookie_raw = client.cookie_raw + '; csrftoken=' + csrf
+    return client
 
 
 def _build_public_client():
@@ -646,7 +659,15 @@ class LeetCodeToolsClient:
         if self.csrf_token:
             headers['X-CSRFToken'] = self.csrf_token
         req = urllib.request.Request(url, data=payload, headers=headers)
-        resp = urllib.request.urlopen(req, timeout=30)
+        try:
+            resp = urllib.request.urlopen(req, timeout=30)
+        except urllib.error.HTTPError as e:
+            body = ''
+            try:
+                body = e.read().decode('utf-8', 'replace')
+            except Exception:
+                pass
+            raise Exception('Submit HTTP %d: %s' % (e.code, body))
         res_json = json.loads(resp.read())
         if 'submission_id' not in res_json:
             raise Exception('Submission failed: ' + str(res_json))
@@ -1629,23 +1650,64 @@ def _run_in_thread(window, target, **kwargs):
 class LeetcodeLoginCommand(sublime_plugin.WindowCommand):
     def run(self):
         try:
-            _cookie_login()
+            webbrowser.open('https://leetcode.cn/')
         except Exception as e:
-            sublime.error_message('Failed to start grabber:\n' + str(e))
+            sublime.error_message('Failed to open browser:\n' + str(e))
+            return
+        sublime.message_dialog(
+            'LeetCode Tools 登录 / Login\n\n'
+            '中文：\n'
+            '1. 在浏览器里登录 https://leetcode.cn\n'
+            '2. 按 F12 打开开发者工具\n'
+            '3. 点顶部「应用 / Application」标签（Firefox 叫「存储 / Storage」）\n'
+            '4. 左侧展开「Cookies」，点 https://leetcode.cn\n'
+            '5. 找到 LEETCODE_SESSION 这一行\n'
+            '6. 双击它的「值 / Value」格子 → 按 Ctrl+A 全选 → Ctrl+C 复制\n'
+            '7. 回到 Sublime，粘贴到输入框，按回车\n\n'
+            'English:\n'
+            '1. Log in to https://leetcode.cn in your browser.\n'
+            '2. Press F12 to open the developer tools.\n'
+            '3. Click the "Application" tab (called "Storage" in Firefox).\n'
+            '4. In the left panel, expand "Cookies" and click https://leetcode.cn.\n'
+            '5. Find the LEETCODE_SESSION row.\n'
+            '6. Double-click its "Value" cell, press Ctrl+A to select all, then Ctrl+C to copy.\n'
+            '7. Back in Sublime, paste it into the input box and press Enter.\n\n'
+            '注意 / Note:\n'
+            'LEETCODE_SESSION 是登录凭证，值很长，一定要 Ctrl+A 全选，否则只复制到一半会登录失败。\n'
+            'LEETCODE_SESSION is the login token; it is very long, so press Ctrl+A to select the whole value, or the login will fail.'
+        )
+        self.window.show_input_panel(
+            '粘贴 LEETCODE_SESSION 的值（或整个 Cookie）:',
+            '', self._on_cookie, None,
+            lambda: sublime.status_message('LeetCodeTools: Login cancelled'))
+
+    def _on_cookie(self, text):
+        try:
+            data = _save_cookie_from_text(text)
+        except Exception as e:
+            sublime.error_message(
+                'LeetCodeTools: 没识别出 sl-session。\n\n'
+                '请复制 leetcode.cn 的 sl-session「值 / Value」再试。')
             return
 
-        def ask():
-            if sublime.ok_cancel_dialog(
-                'LeetCode \n\nBrowser opened. Please log in, then click OK.',
-                ok_title='Logged In'
-            ):
-                _signal_login_ready()
-                sublime.status_message('LeetCodeTools: Reading cookies...')
-                sublime.set_timeout(_check_cookie_ready, 1000)
-            else:
-                sublime.status_message('LeetCodeTools: Login cancelled')
+        sublime.status_message('LeetCodeTools: Verifying cookie...')
 
-        sublime.set_timeout(ask, 1500)
+        def work(window):
+            return _validate_cookie(data)
+
+        def done(window, ok):
+            if ok:
+                sublime.status_message('LeetCodeTools: Login successful!')
+            else:
+                sublime.error_message(
+                    'LeetCodeTools: 没登录成功。\n\n'
+                    '请确认：\n'
+                    '1. 已经登录 leetcode.cn\n'
+                    '2. 复制的是 sl-session 的值（Value），不是名字（Name）\n'
+                    '3. 别复制成 csrftoken 或别的\n\n'
+                    '再运行一次 Login 重试。')
+
+        _run_in_thread(self.window, work, _on_done=done)
 
 
 # ─── Search ───

@@ -9,7 +9,7 @@ LeetCodeTools 是一个 [Sublime Text](https://www.sublimetext.com/) 插件，�
 
 | Command 命令 | Description 说明 |
 |------|------|
-| `LeetCode Tools: Login` | Open Chrome/Edge to log in and grab the session cookie. 打开 Chrome/Edge 登录并抓取登录 Cookie |
+| `LeetCode Tools: Login` | Open the browser to log in and paste the `LEETCODE_SESSION` cookie. 打开浏览器登录并粘贴 `LEETCODE_SESSION` Cookie |
 | `LeetCode Tools: Search` | Search problems by id or title keyword. 按题号 / 标题关键字搜索题目 |
 | `LeetCode Tools: Fetch` | Fetch a problem by id (e.g. `1` or `1 python3`). 输入题号拉取题目（如 `1` 或 `1 python3`） |
 | `LeetCode Tools: Fetch (Force)` | Force re-fetch and overwrite existing files. 强制重新拉取，覆盖已有文件 |
@@ -29,18 +29,11 @@ LeetCodeTools 是一个 [Sublime Text](https://www.sublimetext.com/) 插件，�
 2. Press `Ctrl+Shift+P` (`Cmd+Shift+P` on macOS), run `Package Control: Install Package`, search for `LeetCodeTools`, and press Enter to install.
    按 `Ctrl+Shift+P`（macOS 为 `Cmd+Shift+P`），运行 `Package Control: Install Package`，搜索 `LeetCodeTools` 并回车安装。
 
-3. Install a system **Python 3** and add it to PATH. It is required by Login and the offline Run.
-   安装一个系统 **Python 3** 并加入 PATH。登录和离线 Run 都需要它。
+3. Install a system **Python 3** and add it to PATH. It is required by the offline Run (not by Login).
+   安装一个系统 **Python 3** 并加入 PATH。离线 Run 需要它（登录不需要）。
 
-4. To use **Login**, install `DrissionPage` into that Python and make sure Chrome or Edge is installed:
-   要使用**登录**功能，请在该 Python 里安装 `DrissionPage`，并确保装有 Chrome 或 Edge：
-
-   ```bash
-   pip install DrissionPage
-   ```
-
-5. Press `Ctrl+Shift+P`, run `LeetCode Tools: Login`, log in in the browser, then click OK.
-   按 `Ctrl+Shift+P`，运行 `LeetCode Tools: Login`，在浏览器里登录后点确定即可。
+4. Press `Ctrl+Shift+P`, run `LeetCode Tools: Login`; it opens leetcode.cn in your browser. Log in, then copy the `LEETCODE_SESSION` cookie (F12 → Application → Cookies → `LEETCODE_SESSION`; double-click its Value and press Ctrl+A to select it all) and paste it into the input panel.
+   按 `Ctrl+Shift+P`，运行 `LeetCode Tools: Login`；它会在浏览器打开 leetcode.cn，登录后复制 `LEETCODE_SESSION` cookie（F12 → Application → Cookies → `LEETCODE_SESSION`，双击 Value 后 Ctrl+A 全选）粘贴到输入框即可。
 
 > Note: Search / Fetch / Update / Submit need the login cookie; Open in Browser, Run, and Fetch Official Explanations do not (the official solution uses the public GraphQL API).
 > 说明：Search / Fetch / Update / Submit 需要登录 Cookie；Open in Browser、Run、Fetch Official Explanations 不需要登录（其中官方题解走的是公开 GraphQL 接口）。
@@ -83,8 +76,8 @@ These languages can be used with Fetch (code template) and Submit; the offline R
 
 ## Usage / 使用流程
 
-1. **Log in** (once): `LeetCode Tools: Login` → log in in browser → click OK.
-   **登录**（只需一次）：`LeetCode Tools: Login` → 浏览器登录 → 点确定。
+1. **Log in** (once): `LeetCode Tools: Login` → log in in the browser → copy `LEETCODE_SESSION` → paste it.
+   **登录**（只需一次）：`LeetCode Tools: Login` → 浏览器登录 → 复制 `LEETCODE_SESSION` → 粘贴。
 
 2. **Fetch a problem**: `LeetCode Tools: Fetch` → enter an id (e.g. `1` or `1 python3`); it opens the `.md` and code file.
    **拉题**：`LeetCode Tools: Fetch` → 输入题号（如 `1` 或 `1 python3`），自动打开 `.md` 和代码文件。
@@ -136,7 +129,6 @@ Each problem generates these files under `working_dir`:
 ```
 LeetCodeTools/
 ├── leetcodetools.py                # Main plugin (commands + GraphQL client + offline judge). 主插件（命令 + GraphQL 客户端 + 离线判题）
-├── cookie_grabber.py               # Login cookie grabber (system Python + DrissionPage). 登录抓 Cookie（系统 Python + DrissionPage）
 ├── Default.sublime-commands        # Command-palette menu. 命令面板菜单
 ├── LeetCodeTools.sublime-settings  # Default settings. 默认配置
 └── .python-version                 # Dev Python version. 开发环境 Python 版本
@@ -148,3 +140,5 @@ LeetCodeTools/
   登录 Cookie 缓存在 `~/.leetcode_tools_cache/cookie.json`，题目列表缓存在 `~/.leetcode_tools_cache/problem_list.json`，题集缓存在 `~/.leetcode_tools_cache/study_plans.json` 和 `~/.leetcode_tools_cache/study_plan_problems.json`。
 - Images in problem descriptions and official solutions are downloaded locally (into `{slug}_images/` and `{slug}_explanation_images/`), so you can view them without opening a browser.
   题目描述和官方题解里的图片会下载到本地（`{slug}_images/` 和 `{slug}_explanation_images/`），看图不用开浏览器。
+- When you pick a problem from a study plan (`Select from Problem Set`), submitting it also marks it as done in that study plan.
+  从题集（Select from Problem Set）选的题，提交时也会在对应题集里标记完成。
