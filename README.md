@@ -96,19 +96,26 @@ These languages can be used with Fetch (code template) and Submit; the offline R
 
 ## Generated files / 生成的文件
 
-Each problem generates these files under `working_dir`:
-每题在 `working_dir` 下生成：
+User-facing files go under `working_dir`; the plugin's internal files go into the cache.
+用户可见的文件存在 `working_dir`，插件内部文件存在缓存目录。
+
+**Under `working_dir`（在 working_dir 下）:**
 
 | File 文件 | Content 内容 |
 |------|------|
 | `{slug}.md` | Problem description (HTML → Markdown). 题目描述（HTML 转成 Markdown） |
 | `{slug}.py` | Official code template. 官方代码模板 |
-| `{slug}.json` | Metadata (id / metaData / examples). 元数据（题号 / metaData / 示例用例） |
-| `{slug}_in.json` | Parsed input cases. 解析后的输入用例 |
-| `{slug}_out.json` | Expected outputs. 预期输出 |
 | `{slug}_explanation.md` | Official solution (from Fetch Official Explanations). 官方题解（由 Fetch Official Explanations 生成） |
-| `{slug}_images/` | Images downloaded from the problem description. 题目描述里下载的本地图片 |
-| `{slug}_explanation_images/` | Images downloaded from the official solution. 官方题解里下载的本地图片 |
+
+**In the cache `~/.leetcode_tools_cache/`（在缓存目录下）:**
+
+| File 文件 | Content 内容 |
+|------|------|
+| `problems/{slug}.json` | Metadata (id / metaData / examples). 元数据（题号 / metaData / 示例用例） |
+| `problems/{slug}_in.json` | Parsed input cases. 解析后的输入用例 |
+| `problems/{slug}_out.json` | Expected outputs. 预期输出 |
+| `images/{slug}/` | Problem-description images. 题目描述的图片 |
+| `images/{slug}_explanation/` | Official-solution images. 官方题解的图片 |
 
 ## Current limitations / 当前限制
 

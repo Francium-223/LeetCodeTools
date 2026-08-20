@@ -82,6 +82,30 @@ def _study_plan_problems_cache_path():
     return os.path.join(_cache_dir(), 'study_plan_problems.json')
 
 
+def _problem_cache_dir():
+    return os.path.join(_cache_dir(), 'problems')
+
+
+def _problem_json_path(slug):
+    return os.path.join(_problem_cache_dir(), slug + '.json')
+
+
+def _problem_in_path(slug):
+    return os.path.join(_problem_cache_dir(), slug + '_in.json')
+
+
+def _problem_out_path(slug):
+    return os.path.join(_problem_cache_dir(), slug + '_out.json')
+
+
+def _problem_images_dir(slug):
+    return os.path.join(_cache_dir(), 'images', slug)
+
+
+def _explanation_images_dir(slug):
+    return os.path.join(_cache_dir(), 'images', slug + '_explanation')
+
+
 def _cache_is_fresh(cache_path):
     """判断缓存文件是否在 cache_age_days 天内。"""
     if not os.path.exists(cache_path):
@@ -154,7 +178,7 @@ def _detect_slug(fp):
             meta_base = meta_base[:-len(suffix)]
             break
     slug = None
-    json_path = meta_base + '.json'
+    json_path = _problem_json_path(os.path.basename(meta_base))
     if os.path.exists(json_path):
         try:
             with open(json_path, 'r', encoding='utf-8') as f:
@@ -524,8 +548,8 @@ class LeetCodeToolsClient:
 
         # MD
         md_path = os.path.join(working_dir, title_slug + '.md')
-        img_folder = title_slug + '_images'
-        img_dir = os.path.join(working_dir, img_folder)
+        img_dir = _problem_images_dir(title_slug)
+        img_ref = os.path.relpath(img_dir, working_dir).replace('\\', '/')
         difficulty = detail.get('difficulty') or 'Unknown'
         tags = ', '.join((t.get('translatedName') or t.get('name') or '')
                          for t in detail.get('topicTags', []))
@@ -540,7 +564,7 @@ class LeetCodeToolsClient:
         content = re.sub(r'<code>(.*?)</code>', r'`\1`', content)
         content = re.sub(r'<em>(.*?)</em>', r'*\1*', content)
         content = re.sub(r'<strong>(.*?)</strong>', r'**\1**', content)
-        content = _download_images(content, img_dir, img_folder)
+        content = _download_images(content, img_dir, img_ref)
         content = re.sub(r'<[^>]+>', '', content)
         content = re.sub(r'&nbsp;', ' ', content)
         content = re.sub(r'&lt;', '<', content)
@@ -575,7 +599,8 @@ class LeetCodeToolsClient:
                 f.write(code)
 
         # JSON
-        json_path = os.path.join(working_dir, title_slug + '.json')
+        json_path = _problem_json_path(title_slug)
+        os.makedirs(_problem_cache_dir(), exist_ok=True)
         with open(json_path, 'w', encoding='utf-8') as f:
             json.dump({
                 'titleSlug': title_slug,
@@ -588,8 +613,8 @@ class LeetCodeToolsClient:
             }, f, ensure_ascii=False, indent=2)
 
         # Interpret: 插 return 桩 → Run Code → 抓预期输出
-        in_path = os.path.join(working_dir, title_slug + '_in.json')
-        out_path = os.path.join(working_dir, title_slug + '_out.json')
+        in_path = _problem_in_path(title_slug)
+        out_path = _problem_out_path(title_slug)
         example = detail.get('exampleTestcases', '')
         meta_str = detail.get('metaData', '')
         testcases = _parse_testcases(example, meta_str)
@@ -795,9 +820,9 @@ class LeetCodeToolsClient:
         content = _clean_solution_markdown(detail.get('content'), detail.get('videosInfo'))
         if not content.strip():
             content = '_（题解内容为空）_'
-        img_folder = title_slug + '_explanation_images'
-        img_dir = os.path.join(working_dir, img_folder)
-        content = _download_markdown_images(content, img_dir, img_folder)
+        img_dir = _explanation_images_dir(title_slug)
+        img_ref = os.path.relpath(img_dir, working_dir).replace('\\', '/')
+        content = _download_markdown_images(content, img_dir, img_ref)
         # 原文链接
         topic_id = None
         topic = article.get('topic')
@@ -1805,7 +1830,7 @@ class LeetcodeRunCommand(sublime_plugin.TextCommand):
             sublime.error_message('Unsupported file type: .' + ext)
             return
         base = fp[:-(len(ext) + 1)]
-        json_path = base + '.json'
+        json_path = _problem_json_path(os.path.basename(base))
         if not os.path.exists(json_path):
             sublime.error_message('Test file not found:\n' + json_path)
             return
@@ -1813,7 +1838,8 @@ class LeetcodeRunCommand(sublime_plugin.TextCommand):
 
         def work(window):
             base = fp[:-(len(ext) + 1)]
-            json_path = base + '.json'
+            slug = os.path.basename(base)
+            json_path = _problem_json_path(slug)
             if not os.path.exists(json_path):
                 raise FileNotFoundError('Test file not found: ' + json_path)
             with open(json_path, 'r', encoding='utf-8') as f:
@@ -1832,7 +1858,7 @@ class LeetcodeRunCommand(sublime_plugin.TextCommand):
             params = meta_obj.get('params', [])
             timeout = _run_timeout()
             # 优先用 _in.json（含手动追加的失败用例）
-            in_path = base + '_in.json'
+            in_path = _problem_in_path(slug)
             if os.path.exists(in_path):
                 with open(in_path, encoding='utf-8') as f:
                     raw_tc = json.load(f)
@@ -1850,8 +1876,8 @@ class LeetcodeRunCommand(sublime_plugin.TextCommand):
                 results = _run_offline_subprocess(
                     code, [], [], func_name, timeout,
                     example=example, meta_str=json.dumps(meta_obj), mode='example', filename=fp)
-            in_path = base + '_in.json'
-            out_path = base + '_out.json'
+            in_path = _problem_in_path(slug)
+            out_path = _problem_out_path(slug)
             expected_outputs = None
             if os.path.exists(out_path):
                 with open(out_path, 'r', encoding='utf-8') as f:
@@ -1916,7 +1942,8 @@ class LeetcodeSubmitCommand(sublime_plugin.TextCommand):
 
         def work(window):
             base = fp[:-(len(ext) + 1)]
-            json_path = base + '.json'
+            slug = os.path.basename(base)
+            json_path = _problem_json_path(slug)
             if not os.path.exists(json_path):
                 raise FileNotFoundError('Test file not found: ' + json_path)
             with open(json_path, 'r', encoding='utf-8') as f:
@@ -1969,10 +1996,10 @@ class LeetcodeSubmitCommand(sublime_plugin.TextCommand):
                 # 追加失败的用例到本地 _in/_out（不依赖 std_output）
                 if r.get('last_testcase') and r.get('expected_output'):
                     try:
-                        base = fp[:-(len(ext) + 1)]
-                        in_path = base + '_in.json'
-                        out_path = base + '_out.json'
-                        json_path = base + '.json'
+                        slug = data.get('slug') or os.path.basename(fp[:-(len(ext) + 1)])
+                        in_path = _problem_in_path(slug)
+                        out_path = _problem_out_path(slug)
+                        json_path = _problem_json_path(slug)
                         meta_str = '{}'
                         if os.path.exists(json_path):
                             with open(json_path) as jf:
