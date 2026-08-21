@@ -44,7 +44,7 @@ def _run_timeout():
 
 
 def _cache_dir():
-    return os.path.join(os.path.expanduser('~'), '.leetcode_tools_cache')
+    return os.path.join(_working_dir(), '.cache')
 
 
 def _last_update_path():
@@ -222,7 +222,7 @@ def _download_images(html, img_dir, rel_prefix):
             os.makedirs(img_dir, exist_ok=True)
             with open(os.path.join(img_dir, fname), 'wb') as f:
                 f.write(data)
-            return '![](' + rel_prefix + '/' + fname + ')'
+            return '![](' + rel_prefix + os.sep + fname + ')'
         except Exception:
             return '![](' + src + ')'
 
@@ -252,7 +252,7 @@ def _download_markdown_images(md, img_dir, rel_prefix):
             os.makedirs(img_dir, exist_ok=True)
             with open(os.path.join(img_dir, fname), 'wb') as f:
                 f.write(data)
-            return '![' + alt + '](' + rel_prefix + '/' + fname + ')'
+            return '![' + alt + '](' + rel_prefix + os.sep + fname + ')'
         except Exception:
             return m.group(0)
 

@@ -107,7 +107,7 @@ User-facing files go under `working_dir`; the plugin's internal files go into th
 | `{slug}.py` | Official code template. 官方代码模板 |
 | `{slug}_explanation.md` | Official solution (from Fetch Official Explanations). 官方题解（由 Fetch Official Explanations 生成） |
 
-**In the cache `~/.leetcode_tools_cache/`（在缓存目录下）:**
+**In the cache `{working_dir}/.cache/`（在缓存目录下）:**
 
 | File 文件 | Content 内容 |
 |------|------|
@@ -143,8 +143,8 @@ LeetCodeTools/
 
 ## Notes / 其它
 
-- The login cookie is cached at `~/.leetcode_tools_cache/cookie.json`; the problem list at `~/.leetcode_tools_cache/problem_list.json`; study plans at `~/.leetcode_tools_cache/study_plans.json` and `~/.leetcode_tools_cache/study_plan_problems.json`.
-  登录 Cookie 缓存在 `~/.leetcode_tools_cache/cookie.json`，题目列表缓存在 `~/.leetcode_tools_cache/problem_list.json`，题集缓存在 `~/.leetcode_tools_cache/study_plans.json` 和 `~/.leetcode_tools_cache/study_plan_problems.json`。
+- The login cookie is cached at `{working_dir}/.cache/cookie.json`; the problem list at `{working_dir}/.cache/problem_list.json`; study plans at `{working_dir}/.cache/study_plans.json` and `{working_dir}/.cache/study_plan_problems.json`.
+  登录 Cookie 缓存在 `{working_dir}/.cache/cookie.json`，题目列表缓存在 `{working_dir}/.cache/problem_list.json`，题集缓存在 `{working_dir}/.cache/study_plans.json` 和 `{working_dir}/.cache/study_plan_problems.json`。
 - Images in problem descriptions and official solutions are downloaded locally (into `{slug}_images/` and `{slug}_explanation_images/`), so you can view them without opening a browser.
   题目描述和官方题解里的图片会下载到本地（`{slug}_images/` 和 `{slug}_explanation_images/`），看图不用开浏览器。
 - When you pick a problem from a study plan (`Select from Problem Set`), submitting it also marks it as done in that study plan.
