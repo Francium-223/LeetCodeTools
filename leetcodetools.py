@@ -1488,6 +1488,12 @@ def main():
     func_name = payload.get('func_name', '')
     timeout = payload.get('timeout') or 0
     mode = payload.get('mode', 'raw')
+    try:
+        meta_obj = json.loads(payload.get('meta_str') or '{}')
+    except Exception:
+        meta_obj = {}
+    ret_type = ((meta_obj.get('return') or {}).get('type') or '').lower()
+    node_ret = 'listnode' in ret_type or 'treenode' in ret_type
 
     namespace = {
         'ListNode': ListNode, 'TreeNode': TreeNode, 'Node': Node,
@@ -1550,7 +1556,9 @@ def main():
                             'error': box['error'], 'elapsed': elapsed})
             break
         else:
-            results.append({'input': input_repr, 'output': json.dumps(_to_json(box['output'])),
+            out = box['output']
+            out_str = 'null' if (out is None and not node_ret) else json.dumps(_to_json(out))
+            results.append({'input': input_repr, 'output': out_str,
                             'stdout': buf.getvalue(), 'error': None, 'elapsed': elapsed})
 
     _emit({'results': results})
