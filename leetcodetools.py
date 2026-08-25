@@ -1051,14 +1051,16 @@ def _parse_signature_types(code):
     return types
 
 def _from_json(val, ptype):
-    """JSON 原始值 → ListNode/TreeNode/Node 对象。"""
+    """JSON 原始值 → ListNode/TreeNode/Node 对象。支持数组类型（如 ListNode[]）。"""
     ptype = (ptype or '').lower()
-    if 'listnode' in ptype:
-        return _build_list(val)
-    if 'treenode' in ptype:
-        return _build_tree(val)
-    if 'node' == ptype or 'graph' in ptype or ptype == 'node':
-        return _build_graph(val)
+    is_arr = ptype.endswith('[]')
+    base = ptype[:-2] if is_arr else ptype
+    if 'listnode' in base:
+        return [_build_list(v) for v in val] if is_arr else _build_list(val)
+    if 'treenode' in base:
+        return [_build_tree(v) for v in val] if is_arr else _build_tree(val)
+    if base == 'node' or 'graph' in base:
+        return [_build_graph(v) for v in val] if is_arr else _build_graph(val)
     return val
 
 def _to_json(val):
@@ -1190,13 +1192,7 @@ def _parse_testcases(example_testcases, meta_data_str):
     def _parse_value(raw, param_info):
         val = json.loads(raw)
         ptype = (param_info or {}).get('type', '')
-        if 'ListNode' in ptype or 'listnode' in ptype.lower():
-            return _build_list(val)
-        if 'TreeNode' in ptype or 'treenode' in ptype.lower():
-            return _build_tree(val)
-        if 'Node' in ptype or 'node' == ptype.lower() or 'graph' in ptype.lower():
-            return _build_graph(val)
-        return val
+        return _from_json(val, ptype)
 
     testcases = []
     i = 0
@@ -1356,12 +1352,14 @@ def _build_graph(adj_list):
 
 def _from_json(val, ptype):
     ptype = (ptype or '').lower()
-    if 'listnode' in ptype:
-        return _build_list(val)
-    if 'treenode' in ptype:
-        return _build_tree(val)
-    if ptype == 'node' or 'graph' in ptype:
-        return _build_graph(val)
+    is_arr = ptype.endswith('[]')
+    base = ptype[:-2] if is_arr else ptype
+    if 'listnode' in base:
+        return [_build_list(v) for v in val] if is_arr else _build_list(val)
+    if 'treenode' in base:
+        return [_build_tree(v) for v in val] if is_arr else _build_tree(val)
+    if base == 'node' or 'graph' in base:
+        return [_build_graph(v) for v in val] if is_arr else _build_graph(val)
     return val
 
 
@@ -1420,13 +1418,7 @@ def _parse_testcases(example_testcases, meta_data_str):
     def _parse_value(raw, param_info):
         val = json.loads(raw)
         ptype = (param_info or {}).get('type', '')
-        if 'ListNode' in ptype or 'listnode' in ptype.lower():
-            return _build_list(val)
-        if 'TreeNode' in ptype or 'treenode' in ptype.lower():
-            return _build_tree(val)
-        if 'Node' in ptype or 'node' == ptype.lower() or 'graph' in ptype.lower():
-            return _build_graph(val)
-        return val
+        return _from_json(val, ptype)
 
     testcases = []
     i = 0
