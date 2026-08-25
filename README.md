@@ -11,8 +11,7 @@ LeetCodeTools 是一个 [Sublime Text](https://www.sublimetext.com/) 插件，�
 |------|------|
 | `LeetCode Tools: Login` | Open the browser to log in and paste the `LEETCODE_SESSION` cookie. 打开浏览器登录并粘贴 `LEETCODE_SESSION` Cookie |
 | `LeetCode Tools: Search` | Search problems by id or title keyword. 按题号 / 标题关键字搜索题目 |
-| `LeetCode Tools: Fetch` | Fetch a problem by id (e.g. `1` or `1 python3`). 输入题号拉取题目（如 `1` 或 `1 python3`） |
-| `LeetCode Tools: Fetch (Force)` | Force re-fetch and overwrite existing files. 强制重新拉取，覆盖已有文件 |
+| `LeetCode Tools: Fetch` | Fetch a problem by id (e.g. `1` or `1 python3`); prefix `!` to force overwrite (e.g. `!1`). 输入题号拉取题目（如 `1` 或 `1 python3`）；前缀 `!` 强制覆盖（如 `!1`） |
 | `LeetCode Tools: Update` | Rebuild the local problem-list and study-plan caches. 重建本地题目列表和题集缓存 |
 | `LeetCode Tools: Run` | Run your code offline and compare with the official examples. 离线运行代码，与官方示例对比 |
 | `LeetCode Tools: Submit` | Submit the current code to LeetCode for judging. 把当前代码提交到力扣判题 |

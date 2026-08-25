@@ -1783,12 +1783,18 @@ class LeetcodeSearchCommand(sublime_plugin.WindowCommand):
 class LeetcodeFetchCommand(sublime_plugin.WindowCommand):
     def run(self):
         self.window.show_input_panel(
-            'Problem # (e.g. 1 or 1 python3):', '',
+            'Problem # (e.g. 1 or 1 python3; prefix ! to force overwrite):', '',
             self._on_input, None, None
         )
 
     def _on_input(self, text):
-        parts = text.strip().split()
+        s = (text or '').strip()
+        if not s:
+            return
+        force = s.startswith('!')
+        if force:
+            s = s[1:].strip()
+        parts = s.split()
         if not parts:
             return
         qid = parts[0]
@@ -1796,7 +1802,7 @@ class LeetcodeFetchCommand(sublime_plugin.WindowCommand):
 
         def work(window):
             client = _build_client()
-            return client.fetch_problem(qid, lang)
+            return client.fetch_problem(qid, lang, force=force)
 
         def done(window, result):
             if result:
@@ -2047,37 +2053,6 @@ class LeetcodeUpdateCommand(sublime_plugin.WindowCommand):
 
         sublime.status_message('LeetCodeTools: Updating cache...')
         _run_in_thread(self.window, work, _on_done=done)
-
-# ─── Fetch (Force) ───
-
-class LeetcodeFetchForceCommand(sublime_plugin.WindowCommand):
-    def run(self):
-        self.window.show_input_panel(
-            'Force fetch (overwrites .py/.md):', '',
-            self._on_input, None, None
-        )
-
-    def _on_input(self, text):
-        parts = text.strip().split()
-        if not parts:
-            return
-        qid = parts[0]
-        lang = parts[1] if len(parts) > 1 else _default_lang()
-
-        def work(window):
-            client = _build_client()
-            return client.fetch_problem(qid, lang, force=True)
-
-        def done(window, result):
-            if result:
-                if result.get('md_path'):
-                    window.open_file(result['md_path'])
-                if result.get('code_path'):
-                    window.open_file(result['code_path'])
-                sublime.status_message('LeetCodeTools: #' + str(result['fid']) + ' force fetched')
-
-        _run_in_thread(self.window, work, _on_done=done)
-
 
 # ─── Open in Browser ───
 
