@@ -1052,6 +1052,8 @@ def _parse_signature_types(code):
 
 def _from_json(val, ptype):
     """JSON 原始值 → ListNode/TreeNode/Node 对象。支持数组类型（如 ListNode[]）。"""
+    if val is None:
+        return None
     ptype = (ptype or '').lower()
     is_arr = ptype.endswith('[]')
     base = ptype[:-2] if is_arr else ptype
@@ -1064,7 +1066,9 @@ def _from_json(val, ptype):
     return val
 
 def _to_json(val):
-    """将 ListNode/TreeNode 转回 JSON 可序列化格式。"""
+    """将 ListNode/TreeNode 转回 JSON 可序列化格式。空节点序列化为 []。"""
+    if val is None:
+        return []
     if isinstance(val, ListNode):
         result = []
         cur = val
@@ -1351,6 +1355,8 @@ def _build_graph(adj_list):
 
 
 def _from_json(val, ptype):
+    if val is None:
+        return None
     ptype = (ptype or '').lower()
     is_arr = ptype.endswith('[]')
     base = ptype[:-2] if is_arr else ptype
@@ -1364,6 +1370,8 @@ def _from_json(val, ptype):
 
 
 def _to_json(val):
+    if val is None:
+        return []
     if isinstance(val, ListNode):
         result = []
         cur = val
