@@ -1,8 +1,27 @@
 {
+    // 题目文件保存目录。题目（.md / .py）和缓存（.cache/）都放在这里。
+    // Where problem files (.md / .py) and the cache (.cache/) are saved.
     "working_dir": "~/leetcode",
+
+    // 拉题时的默认语言（Fetch 未指定时使用）。支持的 slug：
+    // Default language slug used by Fetch when none is given. Supported slugs:
+    //   python3, python, java, cpp, c, csharp, javascript,
+    //   typescript, golang, rust, kotlin, swift, scala, ruby, php
     "default_lang": "python3",
+
+    // 题目描述语言：zh = 中文，en = 英文。
+    // Problem description language: "zh" (Chinese) or "en" (English).
     "language": "zh",
+
+    // 站点：cn = 力扣中国（leetcode.cn），com = leetcode.com。
+    // Site: "cn" for leetcode.cn, "com" for leetcode.com.
     "site": "cn",
+
+    // 题目列表 / 题集缓存的有效天数，超过后会自动刷新。
+    // How many days the problem-list / study-plan cache stays fresh.
     "cache_age_days": 7,
+
+    // 离线 Run 的时间上限（秒）。超时或死循环会被杀掉。
+    // Time limit (seconds) for the offline Run; infinite loops are killed.
     "run_timeout": 1
 }
