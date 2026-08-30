@@ -47,7 +47,7 @@ Settings are edited via `Preferences: LeetCodeTools Settings` in the command pal
 | `working_dir` | `~/leetcode` | Where problems are saved. 题目保存目录 |
 | `default_lang` | `python3` | Default language for Fetch. Fetch 默认语言 |
 | `language` | `zh` | Problem language (`zh` / `en`). 题目语言（`zh` / `en`） |
-| `site` | `cn` | `cn` = leetcode.cn, `com` = leetcode.com |
+| `site` | `cn` | `cn` = leetcode.cn; `com` = leetcode.com (**read-only**: search/fetch work, but Submit and the offline expected outputs are blocked by Cloudflare). `cn` = leetcode.cn；`com` = leetcode.com（**只读**：搜题/拉题可用，但提交和离线预期输出被 Cloudflare 拦截，不可用） |
 | `cache_age_days` | `7` | Cache age in days for the problem list and study plans; auto-refreshes when expired. 题目列表与题集的缓存天数，过期自动刷新 |
 | `run_timeout` | `1` | Time limit in seconds for the offline Run (0 = no limit). 离线 Run 的超时秒数（0 表示不限时） |
 

@@ -22,9 +22,12 @@ def _settings():
     return sublime.load_settings('LeetCodeTools.sublime-settings')
 
 
+def _site():
+    return _settings().get('site', 'cn')
+
+
 def _base_url():
-    site = _settings().get('site', 'cn')
-    return 'https://leetcode.cn' if site == 'cn' else 'https://leetcode.com'
+    return 'https://leetcode.cn' if _site() == 'cn' else 'https://leetcode.com'
 
 
 def _working_dir():
@@ -338,22 +341,28 @@ def _save_cookie_from_text(text):
 
 
 def _validate_cookie(cookie_dict):
-    """用需要登录的查询验证会话：todayRecord.userStatus 匿名时为 null。"""
+    """用需要登录的查询验证会话：CN 用 todayRecord.userStatus，US 用 globalData.userStatus.isSignedIn。"""
     try:
         all_cookies = cookie_dict.get('all', {})
         raw = '; '.join(k + '=' + v for k, v in all_cookies.items())
         if not raw:
             session = cookie_dict.get('LEETCODE_SESSION') or cookie_dict.get('sl-session') or ''
             raw = 'LEETCODE_SESSION=' + session
+        if _site() == 'cn':
+            query = 'query { todayRecord { userStatus } }'
+        else:
+            query = 'query { globalData { userStatus { isSignedIn } } }'
         req = urllib.request.Request(
-            'https://leetcode.cn/graphql/',
-            data=json.dumps({'query': 'query { todayRecord { userStatus } }'}).encode(),
+            _base_url() + '/graphql/',
+            data=json.dumps({'query': query}).encode(),
             headers={'Content-Type': 'application/json', 'Cookie': raw, 'User-Agent': 'Mozilla/5.0'}
         )
         resp = urllib.request.urlopen(req, timeout=10)
-        data = json.loads(resp.read())
-        rec = (data.get('data', {}).get('todayRecord') or [{}])[0]
-        return rec.get('userStatus') is not None
+        data = json.loads(resp.read()).get('data', {})
+        if _site() == 'cn':
+            rec = (data.get('todayRecord') or [{}])[0]
+            return rec.get('userStatus') is not None
+        return bool((data.get('userStatus') or {}).get('isSignedIn'))
     except Exception:
         return False
 
@@ -371,16 +380,17 @@ def get_leetcode_cookie():
 def _fetch_csrftoken(cookie_raw=''):
     """通过 nojGlobalData 获取 csrftoken（带登录会话，尽量和会话匹配）。"""
     try:
+        base = _base_url()
         headers = {
             'Content-Type': 'application/json',
             'User-Agent': 'Mozilla/5.0',
-            'Origin': 'https://leetcode.cn',
-            'Referer': 'https://leetcode.cn/',
+            'Origin': base,
+            'Referer': base + '/',
         }
         if cookie_raw:
             headers['Cookie'] = cookie_raw
         req = urllib.request.Request(
-            'https://leetcode.cn/graphql/',
+            base + '/graphql/',
             data=json.dumps({'query': 'query nojGlobalData { siteRegion }'}).encode(),
             headers=headers,
         )
@@ -442,17 +452,18 @@ class LeetCodeToolsClient:
         if operation_name:
             payload['operationName'] = operation_name
         body = json.dumps(payload).encode()
+        base = _base_url()
         headers = {
             'Content-Type': 'application/json',
             'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36',
-            'Origin': 'https://leetcode.cn',
-            'Referer': 'https://leetcode.cn/problemset/',
+            'Origin': base,
+            'Referer': base + '/problemset/',
         }
         if self.cookie_raw:
             headers['Cookie'] = self.cookie_raw
         if self.csrf_token:
             headers['X-CSRFToken'] = self.csrf_token
-        req = urllib.request.Request('https://leetcode.cn/graphql/', data=body, headers=headers)
+        req = urllib.request.Request(base + '/graphql/', data=body, headers=headers)
         resp = urllib.request.urlopen(req, timeout=30)
         data = json.loads(resp.read())
         if 'errors' in data:
@@ -475,24 +486,30 @@ class LeetCodeToolsClient:
         return data['question']
 
     def _fetch_problem_list(self):
-        """从 GraphQL 一次拉全量题目列表（titleCn 是中文）。"""
+        """从 GraphQL 一次拉全量题目列表（CN 有 titleCn，US 没有）。"""
         all_questions = []
         skip = 0
         limit = 100
+        cn = _site() == 'cn'
         while True:
-            query = 'query{problemsetQuestionList(skip:' + str(skip) + ' limit:' + str(limit) + '){total questions{frontendQuestionId title titleCn titleSlug difficulty}}}'
-            data = self._graphql(query)
-            ps = data['problemsetQuestionList']
-            for q in ps['questions']:
+            if cn:
+                query = 'query{problemsetQuestionList(skip:' + str(skip) + ' limit:' + str(limit) + '){total questions{frontendQuestionId title titleCn titleSlug difficulty}}}'
+                data = self._graphql(query)['problemsetQuestionList']
+                items, total, fid_key = data['questions'], data['total'], 'frontendQuestionId'
+            else:
+                query = 'query{questionList(categorySlug:"" skip:' + str(skip) + ' limit:' + str(limit) + ' filters:{}){totalNum data{questionFrontendId title titleSlug difficulty}}}'
+                data = self._graphql(query)['questionList']
+                items, total, fid_key = data['data'], data['totalNum'], 'questionFrontendId'
+            for q in items:
                 all_questions.append({
-                    'frontendQuestionId': str(q.get('frontendQuestionId', '')),
-                    'titleCn': q.get('titleCn', ''),
+                    'frontendQuestionId': str(q.get(fid_key, '')),
+                    'titleCn': q.get('titleCn', '') if cn else '',
                     'title': q.get('title', ''),
                     'titleSlug': q.get('titleSlug', ''),
                     'difficulty': q.get('difficulty', ''),
                 })
             skip += limit
-            if skip >= ps['total']:
+            if skip >= total:
                 break
         os.makedirs(_cache_dir(), exist_ok=True)
         with open(_problem_list_cache_path(), 'w', encoding='utf-8') as f:
@@ -634,21 +651,25 @@ class LeetCodeToolsClient:
         if need_interpret:
             stub_code = _insert_return_stubs(code, meta_str)
             outputs = []
-            try:
-                sid = self.interpret_solution(title_slug, question_id, lang, stub_code, example)
-                result_data = self._check_interpret(sid)
-                expected = result_data.get('expected_code_answer', [])
-                # 去尾哨兵
-                while expected and expected[-1] == '':
-                    expected.pop()
-                for v in expected:
-                    try:
-                        outputs.append(json.loads(v))
-                    except Exception:
-                        outputs.append(v)
-            except Exception as e:
-                sublime.error_message('LeetCodeTools: interpret failed\n\n' + str(e))
+            if _site() != 'cn':
+                # 美国站 Run Code 被 Cloudflare 拦，跳过，只写空预期输出
                 outputs = [''] * len(testcases)
+            else:
+                try:
+                    sid = self.interpret_solution(title_slug, question_id, lang, stub_code, example)
+                    result_data = self._check_interpret(sid)
+                    expected = result_data.get('expected_code_answer', [])
+                    # 去尾哨兵
+                    while expected and expected[-1] == '':
+                        expected.pop()
+                    for v in expected:
+                        try:
+                            outputs.append(json.loads(v))
+                        except Exception:
+                            outputs.append(v)
+                except Exception as e:
+                    sublime.error_message('LeetCodeTools: interpret failed\n\n' + str(e))
+                    outputs = [''] * len(testcases)
             with open(in_path, 'w', encoding='utf-8') as f:
                 serializable = []
                 for tc in testcases:
@@ -664,6 +685,8 @@ class LeetCodeToolsClient:
         }
 
     def submit_code(self, problem_slug, question_id, lang_slug, typed_code, study_plan_slug=None):
+        if _site() != 'cn':
+            raise Exception('美国站 (leetcode.com) 的提交被 Cloudflare 防护，本插件暂不支持 US 提交。请改用网页提交，或把 site 设回 "cn"。')
         base_url = _base_url()
         url = base_url + '/problems/' + problem_slug + '/submit/'
         body = {
@@ -677,8 +700,8 @@ class LeetCodeToolsClient:
         headers = {
             'Content-Type': 'application/json',
             'Cookie': self.cookie_raw,
-            'Origin': 'https://leetcode.cn',
-            'Referer': 'https://leetcode.cn/problems/' + problem_slug + '/',
+            'Origin': _base_url(),
+            'Referer': _base_url() + '/problems/' + problem_slug + '/',
             'User-Agent': 'Mozilla/5.0',
         }
         if self.csrf_token:
@@ -699,7 +722,7 @@ class LeetCodeToolsClient:
         return res_json['submission_id']
 
     def check_submission(self, submission_id):
-        url = 'https://leetcode.cn/submissions/detail/' + str(int(submission_id)) + '/check/'
+        url = _base_url() + '/submissions/detail/' + str(int(submission_id)) + '/check/'
         for _ in range(20):
             time.sleep(1)
             req = urllib.request.Request(url, headers={
@@ -715,7 +738,7 @@ class LeetCodeToolsClient:
 
     def interpret_solution(self, problem_slug, question_id, lang_slug, typed_code, test_input):
         """Run Code（不占提交历史），返回 interpret_id。"""
-        url = 'https://leetcode.cn/problems/' + problem_slug + '/interpret_solution/'
+        url = _base_url() + '/problems/' + problem_slug + '/interpret_solution/'
         payload = json.dumps({
             'lang': lang_slug,
             'question_id': str(question_id),
@@ -725,8 +748,8 @@ class LeetCodeToolsClient:
         headers = {
             'Content-Type': 'application/json',
             'Cookie': self.cookie_raw,
-            'Origin': 'https://leetcode.cn',
-            'Referer': 'https://leetcode.cn/problems/' + problem_slug + '/',
+            'Origin': _base_url(),
+            'Referer': _base_url() + '/problems/' + problem_slug + '/',
             'User-Agent': 'Mozilla/5.0',
         }
         if self.csrf_token:
@@ -739,7 +762,7 @@ class LeetCodeToolsClient:
         return res['interpret_id']
 
     def _check_interpret(self, interpret_id):
-        url = 'https://leetcode.cn/submissions/detail/' + str(interpret_id) + '/check/'
+        url = _base_url() + '/submissions/detail/' + str(interpret_id) + '/check/'
         for _ in range(20):
             time.sleep(1)
             req = urllib.request.Request(url, headers={
@@ -1682,26 +1705,27 @@ def _run_in_thread(window, target, **kwargs):
 
 class LeetcodeLoginCommand(sublime_plugin.WindowCommand):
     def run(self):
+        base = _base_url()
         try:
-            webbrowser.open('https://leetcode.cn/')
+            webbrowser.open(base + '/')
         except Exception as e:
             sublime.error_message('Failed to open browser:\n' + str(e))
             return
         sublime.message_dialog(
             'LeetCode Tools 登录 / Login\n\n'
             '中文：\n'
-            '1. 在浏览器里登录 https://leetcode.cn\n'
+            '1. 在浏览器里登录 ' + base + '\n'
             '2. 按 F12 打开开发者工具\n'
             '3. 点顶部「应用 / Application」标签（Firefox 叫「存储 / Storage」）\n'
-            '4. 左侧展开「Cookies」，点 https://leetcode.cn\n'
+            '4. 左侧展开「Cookies」，点 ' + base + '\n'
             '5. 找到 LEETCODE_SESSION 这一行\n'
             '6. 双击它的「值 / Value」格子 → 按 Ctrl+A 全选 → Ctrl+C 复制\n'
             '7. 回到 Sublime，粘贴到输入框，按回车\n\n'
             'English:\n'
-            '1. Log in to https://leetcode.cn in your browser.\n'
+            '1. Log in to ' + base + ' in your browser.\n'
             '2. Press F12 to open the developer tools.\n'
             '3. Click the "Application" tab (called "Storage" in Firefox).\n'
-            '4. In the left panel, expand "Cookies" and click https://leetcode.cn.\n'
+            '4. In the left panel, expand "Cookies" and click ' + base + '.\n'
             '5. Find the LEETCODE_SESSION row.\n'
             '6. Double-click its "Value" cell, press Ctrl+A to select all, then Ctrl+C to copy.\n'
             '7. Back in Sublime, paste it into the input box and press Enter.\n\n'
@@ -1719,8 +1743,8 @@ class LeetcodeLoginCommand(sublime_plugin.WindowCommand):
             data = _save_cookie_from_text(text)
         except Exception as e:
             sublime.error_message(
-                'LeetCodeTools: 没识别出 sl-session。\n\n'
-                '请复制 leetcode.cn 的 sl-session「值 / Value」再试。')
+                'LeetCodeTools: 没识别出 LEETCODE_SESSION。\n\n'
+                '请复制 ' + _base_url() + ' 的 LEETCODE_SESSION「值 / Value」再试。')
             return
 
         sublime.status_message('LeetCodeTools: Verifying cookie...')
@@ -1735,8 +1759,8 @@ class LeetcodeLoginCommand(sublime_plugin.WindowCommand):
                 sublime.error_message(
                     'LeetCodeTools: 没登录成功。\n\n'
                     '请确认：\n'
-                    '1. 已经登录 leetcode.cn\n'
-                    '2. 复制的是 sl-session 的值（Value），不是名字（Name）\n'
+                    '1. 已经登录 ' + _base_url() + '\n'
+                    '2. 复制的是 LEETCODE_SESSION 的值（Value），不是名字（Name）\n'
                     '3. 别复制成 csrftoken 或别的\n\n'
                     '再运行一次 Login 重试。')
 
