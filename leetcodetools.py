@@ -1981,7 +1981,7 @@ class LeetcodeRunCommand(sublime_plugin.TextCommand):
                     lines.append('  INPUT  ' + str(inp))
                     if stdout:
                         lines.append('  STDOUT\n' + stdout)
-                    lines.append('  OUTPUT ' + str(out))
+                    lines.append('  OUTPUT ' + _display_val(out))
                     lines.append('  TIME   ' + _fmt_time(elapsed))
                     if expected_outputs and i <= len(expected_outputs):
                         exp = expected_outputs[i - 1]
