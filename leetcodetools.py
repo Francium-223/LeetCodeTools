@@ -1050,8 +1050,39 @@ def _build_graph(adj_list):
         nodes[i].neighbors = [nodes[n - 1] for n in nbrs]
     return nodes[0] if nodes else None
 
+def _annotation_base_type(ann):
+    """把一个类型注解归一成 _from_json 认识的名字。
+
+    Optional / Union 剥掉，List[X] 之类的容器转成 X[]，其余取类型名本身：
+      List[int]        -> int[]
+      List[ListNode]   -> ListNode[]
+      Optional[TreeNode] -> TreeNode
+      Union[int, None] -> int
+      "Node"           -> Node
+    """
+    ann = (ann or '').strip().strip("'\"").strip()
+    if not ann:
+        return ''
+    # 去掉最外层括号，如 (List[int])
+    while ann.startswith('(') and ann.endswith(')'):
+        ann = ann[1:-1].strip()
+    wrapper = re.match(r'(\w+)\s*\[(.*)\]$', ann, re.S)
+    if wrapper:
+        head, inner = wrapper.group(1).lower(), wrapper.group(2).strip()
+        if head == 'optional':
+            return _annotation_base_type(inner)
+        if head == 'union':
+            parts = [p for p in inner.split(',') if p.strip().lower() not in ('none', 'nonetype')]
+            return _annotation_base_type(parts[0]) if parts else ''
+        if head in ('list', 'sequence', 'iterable'):
+            base = _annotation_base_type(inner)
+            return base + '[]' if base else ''
+    m = re.search(r'[A-Za-z_]\w*', ann)
+    return m.group(0) if m else ''
+
+
 def _parse_signature_types(code):
-    """从 Python 函数签名提取参数类型名列表。"""
+    """从 Python 函数签名提取参数类型名列表，交给 _from_json 解释。"""
     types = []
     for line in code.split('\n'):
         stripped = line.strip()
@@ -1062,14 +1093,9 @@ def _parse_signature_types(code):
                 for p in params.split(','):
                     p = p.strip()
                     if ':' in p:
-                        ann = p.split(':', 1)[1].strip()
-                        inner = re.search(r'\[(.*)\]', ann)
-                        if inner:
-                            ann = inner.group(1)
-                        ann = ann.strip().strip("'\"").strip()
-                        mm = re.search(r'(\w+)', ann)
-                        if mm:
-                            types.append(mm.group(1))
+                        name = _annotation_base_type(p.split(':', 1)[1])
+                        if name:
+                            types.append(name)
                 break
     return types
 
@@ -1471,6 +1497,15 @@ def _parse_testcases(example_testcases, meta_data_str):
     return testcases
 
 
+def _returns_none(code, func_name, ret_type=''):
+    """判断目标函数是否声明了 `-> None`（即原地修改、无返回值的函数）。"""
+    if func_name:
+        m = re.search(r'def\s+' + re.escape(func_name) + r'\s*\([\s\S]*?\)\s*->\s*([^\s:]+)', code)
+        if m:
+            return m.group(1).strip().strip('\'"').lower() in ('none', 'nonetype')
+    return ret_type.strip().lower() in ('none', 'nonetype')
+
+
 def _find_func(namespace, func_name):
     func = namespace.get(func_name)
     if func is not None:
@@ -1517,6 +1552,8 @@ def main():
         meta_obj = {}
     ret_type = ((meta_obj.get('return') or {}).get('type') or '').lower()
     node_ret = 'listnode' in ret_type or 'treenode' in ret_type
+    # `-> None` 说明函数是原地修改的，返回值为 None；此时改对比第一个入参。
+    in_place = _returns_none(code, func_name, ret_type)
 
     namespace = {
         'ListNode': ListNode, 'TreeNode': TreeNode, 'Node': Node,
@@ -1580,8 +1617,16 @@ def main():
             break
         else:
             out = box['output']
-            out_str = 'null' if (out is None and not node_ret) else json.dumps(_to_json(out))
-            results.append({'input': input_repr, 'output': out_str,
+            if in_place and args:
+                # 原地函数：返回值是 None，真正的结果是被改写的第一个入参。
+                out = args[0]
+            elif out is None and node_ret:
+                # 返回节点类型的函数返回了 None（空链表 / 空树 / 空图），序列化成 []
+                out = []
+            # 直接放真正的值，让外层 envelope 一次性 JSON 序列化。
+            # 不能在这里 json.dumps：那样字符串会变成 '"abc"'、布尔会变成 'true'，
+            # 落进 JSON 里就成了字符串，跟 _out.json 里的裸值类型对不上。
+            results.append({'input': input_repr, 'output': _to_json(out),
                             'stdout': buf.getvalue(), 'error': None, 'elapsed': elapsed})
 
     _emit({'results': results})
@@ -1940,17 +1985,8 @@ class LeetcodeRunCommand(sublime_plugin.TextCommand):
                     lines.append('  TIME   ' + _fmt_time(elapsed))
                     if expected_outputs and i <= len(expected_outputs):
                         exp = expected_outputs[i - 1]
-                        try:
-                            out_val = json.loads(out) if isinstance(out, str) else out
-                            exp_val = json.loads(exp) if isinstance(exp, str) else exp
-                            match = out_val == exp_val
-                        except Exception:
-                            match = str(out).strip() == str(exp).strip()
-                        try:
-                            exp_repr = json.dumps(exp, ensure_ascii=False)
-                        except Exception:
-                            exp_repr = str(exp)
-                        lines.append('  EXPECT ' + exp_repr + ('  OK' if match else '  FAIL'))
+                        match = _values_match(out, exp)
+                        lines.append('  EXPECT ' + _display_val(exp) + ('  OK' if match else '  FAIL'))
                         if match: passed += 1
                 lines.append('')
             lines.append(str(passed) + '/' + str(len(results)) + ' passed.')
@@ -1964,8 +2000,25 @@ class LeetcodeRunCommand(sublime_plugin.TextCommand):
         _run_in_thread(window, work, _on_done=done)
 
 
-# ─── Submit ───
+def _values_match(a, b):
+    """按值判等：两边本身的值相等才算过。
 
+    runner 的 output 与 _out.json 里存的都是裸值（JSON 原生类型），所以直接比就行。
+    不比 str() 渲染出来的样子，也不做任何跨类型折算——字符串 'true' 和布尔 True
+    是两个不同的值，不能算相等。
+    """
+    return a == b
+
+
+def _display_val(val):
+    """输出面板里展示一个值：字符串带引号，布尔显示 true/false 而不是 True/False。"""
+    try:
+        return json.dumps(val, ensure_ascii=False)
+    except Exception:
+        return str(val)
+
+
+# ─── Submit ───
 class LeetcodeSubmitCommand(sublime_plugin.TextCommand):
     def run(self, edit):
         fp = self.view.file_name()
@@ -2059,9 +2112,20 @@ class LeetcodeSubmitCommand(sublime_plugin.TextCommand):
                         if os.path.exists(out_path):
                             with open(out_path) as f:
                                 exp_list = json.load(f)
-                            exp_list.append(exp_val)
+                            # 同一条失败用例只留一份；_out 的期望值是同一条用例的正确答案，
+                            # 重复跑同一条不会再产生新信息。
+                            seen = [json.dumps(t, sort_keys=True) for t in tc_list]
+                            for tc in new_tc:
+                                key = json.dumps([_to_json(v) for v in tc], sort_keys=True)
+                                if key in seen:
+                                    continue
+                                seen.append(key)
+                                tc_list.append([_to_json(v) for v in tc])
+                                exp_list.append(exp_val)
+                            with open(in_path, 'w') as f:
+                                json.dump(tc_list, f, ensure_ascii=False)
                             with open(out_path, 'w') as f:
-                                json.dump(exp_list, f)
+                                json.dump(exp_list, f, ensure_ascii=False)
                     except Exception:
                         pass
             lines.append('')
