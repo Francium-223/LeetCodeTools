@@ -2008,6 +2008,12 @@ class LeetcodeRunCommand(sublime_plugin.TextCommand):
                         lines.append('  EXPECT ' + _display_val(exp) + ('  OK' if match else '  FAIL'))
                         if match: passed += 1
                 lines.append('')
+            missing = (len(results) - len(expected_outputs)) if expected_outputs is not None else 0
+            if missing > 0:
+                lines.append('NOTE: _in.json has ' + str(len(results)) + ' case(s) but _out.json only has '
+                             + str(len(expected_outputs)) + ' expected value(s), so the last '
+                             + str(missing) + ' case(s) cannot be judged. Re-submit to fill them in.')
+                lines.append('')
             lines.append(str(passed) + '/' + str(len(results)) + ' passed.')
             lines.append('Total time: ' + _fmt_time(total_time))
             lines.append('=' * 50)
@@ -2035,6 +2041,88 @@ def _display_val(val):
         return json.dumps(val, ensure_ascii=False)
     except Exception:
         return str(val)
+
+
+def _read_case_list(path):
+    """读一个用例/期望值数组文件；不存在或格式不对就返回空列表，不让 Run/Submit 崩掉。"""
+    if not os.path.exists(path):
+        return []
+    try:
+        with open(path, encoding='utf-8') as f:
+            data = json.load(f)
+    except Exception:
+        return []
+    return data if isinstance(data, list) else []
+
+
+def _case_key(tc):
+    return json.dumps(tc, sort_keys=True, ensure_ascii=False)
+
+
+def _append_failed_case(slug, last_testcase, expected_output):
+    """把 Submit 失败的那条用例追加到本地 _in.json / _out.json。
+
+    _in 和 _out 是按下标一一对应的两个数组，必须同时追加、且同一条用例只留一份。
+    只有本地已经存在 _in.json（说明这题已经开了手动用例）才追加，
+    免得把本来跑 exampleTestcases 的题切成 raw 模式。
+
+    返回 (新追加了几条, 给 _out 补齐了几条期望值)。
+    """
+    in_path = _problem_in_path(slug)
+    out_path = _problem_out_path(slug)
+    if not os.path.exists(in_path):
+        return (0, 0)
+
+    meta = {}
+    json_path = _problem_json_path(slug)
+    if os.path.exists(json_path):
+        try:
+            with open(json_path, encoding='utf-8') as jf:
+                meta = json.load(jf).get('metaData', '{}')
+        except Exception:
+            meta = {}
+    if isinstance(meta, str):
+        try:
+            meta = json.loads(meta)
+        except Exception:
+            meta = {}
+
+    new_tc = _parse_testcases(last_testcase or '', json.dumps(meta))
+    try:
+        exp_val = json.loads(expected_output)
+    except Exception:
+        exp_val = expected_output
+
+    tc_list = _read_case_list(in_path)
+    exp_list = _read_case_list(out_path)
+    index = {}
+    for i, t in enumerate(tc_list):
+        index.setdefault(_case_key(t), i)
+
+    added = 0
+    filled = 0
+    for tc in new_tc:
+        tc_json = [_to_json(v) for v in tc]
+        key = _case_key(tc_json)
+        i = index.get(key)
+        if i is None:
+            index[key] = len(tc_list)
+            tc_list.append(tc_json)
+            exp_list.append(exp_val)
+            added += 1
+        elif i >= len(exp_list):
+            # 老版本 bug 只把用例写进了 _in、期望值没写进 _out。趁这次 Submit 把缺的补上，
+            # 让两边下标重新对齐，否则 Run 里这些用例根本没有 EXPECT 行。
+            exp_list.extend([None] * (i - len(exp_list)))
+            exp_list.append(exp_val)
+            filled += 1
+
+    if added or filled:
+        with open(in_path, 'w', encoding='utf-8') as f:
+            json.dump(tc_list, f, ensure_ascii=False)
+        with open(out_path, 'w', encoding='utf-8') as f:
+            json.dump(exp_list, f, ensure_ascii=False)
+    return (added, filled)
 
 
 # ─── Submit ───
@@ -2105,48 +2193,11 @@ class LeetcodeSubmitCommand(sublime_plugin.TextCommand):
                     lines.append(r['std_output'])
                 # 追加失败的用例到本地 _in/_out（不依赖 std_output）
                 if r.get('last_testcase') and r.get('expected_output'):
+                    slug = data.get('slug') or os.path.basename(fp[:-(len(ext) + 1)])
                     try:
-                        slug = data.get('slug') or os.path.basename(fp[:-(len(ext) + 1)])
-                        in_path = _problem_in_path(slug)
-                        out_path = _problem_out_path(slug)
-                        json_path = _problem_json_path(slug)
-                        meta_str = '{}'
-                        if os.path.exists(json_path):
-                            with open(json_path) as jf:
-                                meta_str = json.load(jf).get('metaData', '{}')
-                        meta = json.loads(meta_str) if isinstance(meta_str, str) else meta_str
-                        new_tc = _parse_testcases(r['last_testcase'], json.dumps(meta))
-                        exp_val = r['expected_output']
-                        try:
-                            exp_val = json.loads(exp_val)
-                        except Exception:
-                            pass
-                        if os.path.exists(in_path):
-                            with open(in_path) as f:
-                                tc_list = json.load(f)
-                            for tc in new_tc:
-                                tc_list.append([_to_json(v) for v in tc])
-                            with open(in_path, 'w') as f:
-                                json.dump(tc_list, f)
-                        if os.path.exists(out_path):
-                            with open(out_path) as f:
-                                exp_list = json.load(f)
-                            # 同一条失败用例只留一份；_out 的期望值是同一条用例的正确答案，
-                            # 重复跑同一条不会再产生新信息。
-                            seen = [json.dumps(t, sort_keys=True) for t in tc_list]
-                            for tc in new_tc:
-                                key = json.dumps([_to_json(v) for v in tc], sort_keys=True)
-                                if key in seen:
-                                    continue
-                                seen.append(key)
-                                tc_list.append([_to_json(v) for v in tc])
-                                exp_list.append(exp_val)
-                            with open(in_path, 'w') as f:
-                                json.dump(tc_list, f, ensure_ascii=False)
-                            with open(out_path, 'w') as f:
-                                json.dump(exp_list, f, ensure_ascii=False)
-                    except Exception:
-                        pass
+                        _append_failed_case(slug, r['last_testcase'], r['expected_output'])
+                    except Exception as e:
+                        lines.append('(append testcase failed: ' + str(e) + ')')
             lines.append('')
             lines.append('=' * 50)
             _show_output(window, 'leetcode_submit', '\n'.join(lines))
