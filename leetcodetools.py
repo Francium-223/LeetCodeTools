@@ -1506,17 +1506,34 @@ def _returns_none(code, func_name, ret_type=''):
     return ret_type.strip().lower() in ('none', 'nonetype')
 
 
-def _find_func(namespace, func_name):
+def _find_func(namespace, func_name, injected=None):
+    """在用户代码里找目标函数。
+
+    injected 是 runner 预置的 name -> 对象（ListNode / typing 导出等），必须跳过它们：
+    typing 里的 Text 就是 str，而 str 有 .partition / .count 等方法，否则
+    _find_func(ns, 'partition') 会返回空字符串的 str.partition，
+    用户自己写的 Solution.partition 永远轮不到，结果就是 ["", "", ""]。
+    判断用「值是不是注入的那个对象」，这样用户在代码里重新定义同名顶层函数也算用户的。
+    """
+    injected = injected or {}
+
+    def _from_user(name, obj):
+        return name not in injected or injected[name] is not obj
+
     func = namespace.get(func_name)
-    if func is not None:
+    if func is not None and _from_user(func_name, func):
         return func
-    for v in namespace.values():
+    for name, v in namespace.items():
+        if not _from_user(name, v):
+            continue
         if isinstance(v, type) and hasattr(v, func_name):
             return getattr(v(), func_name)
-    for v in namespace.values():
+    for name, v in namespace.items():
+        if not _from_user(name, v):
+            continue
         if callable(v) and not getattr(v, '__name__', '').startswith('_'):
-            name = getattr(v, '__name__', '')
-            if name in ('_build_list', '_build_tree', '_build_graph', func_name):
+            fname = getattr(v, '__name__', '')
+            if fname in ('_build_list', '_build_tree', '_build_graph', func_name):
                 continue
             if isinstance(v, type):
                 continue
@@ -1560,14 +1577,16 @@ def main():
         '_build_list': _build_list, '_build_tree': _build_tree, '_build_graph': _build_graph,
     }
     filename = payload.get('filename') or '<solution>'
+    injected = dict(namespace)
     try:
         exec('from typing import *', namespace)
+        injected.update(namespace)
         exec(compile(code, filename, 'exec'), namespace)
     except Exception:
         _emit({'error': 'Compile/Exec Error:\n' + _user_error_text()})
         return
 
-    func = _find_func(namespace, func_name)
+    func = _find_func(namespace, func_name, injected)
     if func is None:
         _emit({'error': 'Function "' + func_name + '" not found in code.'})
         return
