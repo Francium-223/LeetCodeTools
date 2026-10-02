@@ -13,6 +13,7 @@ LeetCodeTools 是一个 [Sublime Text](https://www.sublimetext.com/) 插件，�
 | `LeetCode Tools: Search` | Open a filterable list of every problem (type an id or a title keyword in the panel, press Enter to fetch). 打开可过滤的题目列表（在面板里输入题号或标题关键字，回车拉题） |
 | `LeetCode Tools: Update` | Rebuild the local problem-list and study-plan caches. 重建本地题目列表和题集缓存 |
 | `LeetCode Tools: Run` | Run your code offline and compare with the official examples. 离线运行代码，与官方示例对比 |
+| `LeetCode Tools: Run Online` | Same output as Run, but executed by LeetCode (like `Ctrl+'` in the web editor); works for every language, needs the login cookie. 输出格式和 Run 一致，但代码发到力扣跑（等价网页端 `Ctrl+'`）；支持所有语言，需要登录 Cookie |
 | `LeetCode Tools: Submit` | Submit the current code to LeetCode for judging. 把当前代码提交到力扣判题 |
 | `LeetCode Tools: Open in Browser` | Open the current problem's page in the browser. 在浏览器打开当前题目的网页 |
 | `LeetCode Tools: Fetch Official Explanations` | Fetch the official solution as `xxx_explanation.md`. 拉取官方题解为 `xxx_explanation.md` |
@@ -83,8 +84,8 @@ These languages are available for fetched code templates and for Submit; the off
 3. **Solve it**: write your solution in the code file.
    **做题**：在代码文件里写解法。
 
-4. **Run locally**: `LeetCode Tools: Run` shows a comparison with the official examples in the output panel.
-   **本地跑**：`LeetCode Tools: Run`，在输出面板看到和官方示例的对比结果。
+4. **Run**: `LeetCode Tools: Run` executes locally (Python only) and compares with the official examples; `LeetCode Tools: Run Online` has the same output layout but is executed by LeetCode (like `Ctrl+'` in the web editor), so it works for any language.
+   **运行**：`LeetCode Tools: Run` 在本地跑（仅 Python）并与官方示例对比；`LeetCode Tools: Run Online` 输出格式完全一致，但代码是发到力扣跑的（等价网页端 `Ctrl+'`），所以任何语言都能用。
 
 5. **Submit**: `LeetCode Tools: Submit`; failed cases are appended to the local `_in.json` / `_out.json` for offline replay.
    **提交**：`LeetCode Tools: Submit`，失败用例会自动追加到本地 `_in.json` / `_out.json`，方便离线复现。

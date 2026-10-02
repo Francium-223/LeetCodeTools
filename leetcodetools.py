@@ -1656,7 +1656,7 @@ def _ensure_offline_runner():
 
 
 def _run_offline_subprocess(code, raw_tc, types, func_name, timeout, example='', meta_str='{}', mode='raw', filename=None):
-    """在子进程里跑离线判题（可 kill 死循环）。返回 5 元组结果列表。"""
+    """在子进程里跑离线判题（可 kill 死循环）。返回 runner 的逐条结果 dict 列表。"""
     python_exe = _find_system_python()
     runner = _ensure_offline_runner()
     payload = {
@@ -1706,14 +1706,9 @@ def _run_offline_subprocess(code, raw_tc, types, func_name, timeout, example='',
     if data.get('error'):
         raise Exception(data['error'])
 
-    results = data.get('results', [])
-    return [(
-        r.get('input', ''),
-        r.get('output', ''),
-        r.get('stdout', ''),
-        r.get('error'),
-        r.get('elapsed', 0.0),
-    ) for r in results]
+    # runner 吐的本来就是 dict（input / output / stdout / error / elapsed），直接透传；
+    # 离线 / 在线的排版统一由 _format_judge_panel 负责。
+    return data.get('results', [])
 
 
 # ==================== Sublime 命令 ====================
@@ -1870,9 +1865,19 @@ class LeetcodeSearchCommand(sublime_plugin.WindowCommand):
         _run_in_thread(self.window, work, _on_done=done)
 
 
-# ─── Run (Offline Judge) ───
+# ─── Run (Offline Judge / LeetCode Run Code) ───
 
 class LeetcodeRunCommand(sublime_plugin.TextCommand):
+    """判题入口：默认在本地离线跑（online = False）。
+
+    两个命令共用这一个 run()，LeetcodeRunOnlineCommand 只是把 online / banner 翻过来
+    （皮套），结果都写进同一个 'leetcode_run' 面板，方便两条路对照着看。
+    """
+
+    online = False
+    banner = 'LeetCode Offline Judge'
+    panel = 'leetcode_run'
+
     def run(self, edit):
         fp = self.view.file_name()
         if not fp:
@@ -1905,75 +1910,54 @@ class LeetcodeRunCommand(sublime_plugin.TextCommand):
             func_name = meta_obj.get('name', '')
             with open(fp, 'r', encoding='utf-8') as f:
                 code = f.read()
-            # manual 题用函数签名类型，否则用 metaData 类型
-            manual = meta_obj.get('manual', False)
-            sig_types = _parse_signature_types(code)
-            params = meta_obj.get('params', [])
-            timeout = _run_timeout()
-            # 优先用 _in.json（含手动追加的失败用例）
-            in_path = _problem_in_path(slug)
-            if os.path.exists(in_path):
-                with open(in_path, encoding='utf-8') as f:
-                    raw_tc = json.load(f)
-                max_args = max((len(tc) for tc in raw_tc), default=0)
-                types = []
-                for j in range(max_args):
-                    if manual and j < len(sig_types):
-                        types.append(sig_types[j])
-                    else:
-                        types.append(params[j].get('type', '') if j < len(params) else '')
-                results = _run_offline_subprocess(
-                    code, raw_tc, types, func_name, timeout, mode='raw', filename=fp)
+            example = test_data.get('exampleTestcases', '')
+            if self.online:
+                # 网页端 Ctrl+'：代码发给 LeetCode，用官方示例跑一遍
+                results = _run_online(code, slug, test_data, meta_obj, example, ext)
+                expected_outputs = None
             else:
-                example = test_data.get('exampleTestcases', '')
-                results = _run_offline_subprocess(
-                    code, [], [], func_name, timeout,
-                    example=example, meta_str=json.dumps(meta_obj), mode='example', filename=fp)
-            in_path = _problem_in_path(slug)
-            out_path = _problem_out_path(slug)
-            expected_outputs = None
-            if os.path.exists(out_path):
-                with open(out_path, 'r', encoding='utf-8') as f:
-                    expected_outputs = json.load(f)
-            _, fname = os.path.split(fp)
-            lines = ['=' * 50, '  LeetCode Offline Judge -- ' + fname, '=' * 50, '']
-            passed = 0
-            total_time = 0.0
-            for i, (inp, out, stdout, err, elapsed) in enumerate(results, 1):
-                total_time += elapsed
-                lines.append('Test ' + str(i) + ':')
-                if err:
-                    lines.append('  INPUT  ' + str(inp))
-                    lines.append('  ERROR  ' + str(err))
-                    if stdout:
-                        lines.append('  STDOUT\n' + stdout)
+                # manual 题用函数签名类型，否则用 metaData 类型
+                manual = meta_obj.get('manual', False)
+                sig_types = _parse_signature_types(code)
+                params = meta_obj.get('params', [])
+                timeout = _run_timeout()
+                # 优先用 _in.json（含手动追加的失败用例）
+                in_path = _problem_in_path(slug)
+                if os.path.exists(in_path):
+                    with open(in_path, encoding='utf-8') as f:
+                        raw_tc = json.load(f)
+                    max_args = max((len(tc) for tc in raw_tc), default=0)
+                    types = []
+                    for j in range(max_args):
+                        if manual and j < len(sig_types):
+                            types.append(sig_types[j])
+                        else:
+                            types.append(params[j].get('type', '') if j < len(params) else '')
+                    results = _run_offline_subprocess(
+                        code, raw_tc, types, func_name, timeout, mode='raw', filename=fp)
                 else:
-                    lines.append('  INPUT  ' + str(inp))
-                    if stdout:
-                        lines.append('  STDOUT\n' + stdout)
-                    lines.append('  OUTPUT ' + _display_val(out))
-                    lines.append('  TIME   ' + _fmt_time(elapsed))
-                    if expected_outputs and i <= len(expected_outputs):
-                        exp = expected_outputs[i - 1]
-                        match = _values_match(out, exp)
-                        lines.append('  EXPECT ' + _display_val(exp) + ('  OK' if match else '  FAIL'))
-                        if match: passed += 1
-                lines.append('')
-            missing = (len(results) - len(expected_outputs)) if expected_outputs is not None else 0
-            if missing > 0:
-                lines.append('NOTE: _in.json has ' + str(len(results)) + ' case(s) but _out.json only has '
-                             + str(len(expected_outputs)) + ' expected value(s), so the last '
-                             + str(missing) + ' case(s) cannot be judged. Re-submit to fill them in.')
-                lines.append('')
-            lines.append(str(passed) + '/' + str(len(results)) + ' passed.')
-            lines.append('Total time: ' + _fmt_time(total_time))
-            lines.append('=' * 50)
-            return '\n'.join(lines)
+                    results = _run_offline_subprocess(
+                        code, [], [], func_name, timeout,
+                        example=example, meta_str=json.dumps(meta_obj), mode='example', filename=fp)
+                out_path = _problem_out_path(slug)
+                expected_outputs = None
+                if os.path.exists(out_path):
+                    with open(out_path, 'r', encoding='utf-8') as f:
+                        expected_outputs = json.load(f)
+            _, fname = os.path.split(fp)
+            return _format_judge_panel(self.banner, fname, results, expected_outputs)
 
         def done(window, text):
-            _show_output(window, 'leetcode_run', text)
+            _show_output(window, self.panel, text)
 
         _run_in_thread(window, work, _on_done=done)
+
+
+class LeetcodeRunOnlineCommand(LeetcodeRunCommand):
+    """LeetCodeTools: Run Online —— 皮套：只把旗翻过来，逻辑全在基类。"""
+
+    online = True
+    banner = 'LeetCode Online Judge'
 
 
 def _values_match(a, b):
@@ -1992,6 +1976,183 @@ def _display_val(val):
         return json.dumps(val, ensure_ascii=False)
     except Exception:
         return str(val)
+
+
+# ─── 判题结果排版（离线 / 在线共用）───
+
+_MISSING = object()
+
+
+def _format_judge_panel(banner, fname, results, expected_outputs=None):
+    """把判题结果渲染成输出面板文本，离线和在线共用同一套排版。
+
+    results 每条是一个 dict：input / output / stdout / error / elapsed；
+    可选 expected（这一条的期望值）和 ok（服务端给的判定，给了就优先用它，不再本地按值比）。
+    expected_outputs 是离线判题用的 _out.json（按下标对应 results），None 表示没有期望值文件。
+    """
+    lines = ['=' * 50, '  ' + banner + ' -- ' + fname, '=' * 50, '']
+    passed = 0
+    judged = 0
+    total_time = 0.0
+    has_time = False
+    for i, r in enumerate(results, 1):
+        elapsed = r.get('elapsed')
+        if elapsed is not None:
+            total_time += elapsed
+            has_time = True
+        stdout = r.get('stdout') or ''
+        err = r.get('error')
+        lines.append('Test ' + str(i) + ':')
+        if err:
+            # 出错的行和离线判题一样：只给 INPUT + ERROR（没有输入就只给 ERROR，
+            # 比如编译错误那种整段跑不起来的）
+            if r.get('input'):
+                lines.append('  INPUT  ' + str(r['input']))
+            lines.append('  ERROR  ' + str(err))
+            if stdout:
+                lines.append('  STDOUT\n' + stdout)
+            lines.append('')
+            continue
+        lines.append('  INPUT  ' + str(r.get('input', '')))
+        if stdout:
+            lines.append('  STDOUT\n' + stdout)
+        lines.append('  OUTPUT ' + _display_val(r.get('output')))
+        if elapsed is not None:
+            lines.append('  TIME   ' + _fmt_time(elapsed))
+        exp = r.get('expected', _MISSING)
+        if exp is _MISSING and expected_outputs and i <= len(expected_outputs):
+            exp = expected_outputs[i - 1]
+        # 空串 / None 一律当成"没有期望值"：.com 上拿不到 Run Code 时 _out.json 就是一片空值，
+        # 那种情况下显示 EXPECT ""  FAIL 是骗人的（其实什么都没比）。
+        if exp is not _MISSING and exp is not None and exp != '':
+            judged += 1
+            ok = r.get('ok')
+            match = ok if ok is not None else _values_match(r.get('output'), exp)
+            lines.append('  EXPECT ' + _display_val(exp) + ('  OK' if match else '  FAIL'))
+            if match:
+                passed += 1
+        lines.append('')
+    missing = (len(results) - len(expected_outputs)) if expected_outputs is not None else 0
+    if missing > 0:
+        lines.append('NOTE: _in.json has ' + str(len(results)) + ' case(s) but _out.json only has '
+                     + str(len(expected_outputs)) + ' expected value(s), so the last '
+                     + str(missing) + ' case(s) cannot be judged. Submit a WA or re-fetch to fill them in.')
+        lines.append('')
+    if judged:
+        lines.append(str(passed) + '/' + str(len(results)) + ' passed.')
+    else:
+        lines.append(str(len(results)) + ' case(s) run — no expected outputs, nothing compared.')
+        lines.append('  (expected outputs come from LeetCode "Run Code"; on leetcode.com that can be')
+        lines.append('   blocked by Cloudflare — see the plugin README, then re-fetch to retry)')
+    if has_time:
+        lines.append('Total time: ' + _fmt_time(total_time))
+    lines.append('=' * 50)
+    return '\n'.join(lines)
+
+
+# ─── 在线跑（网页端 Ctrl+'）───
+
+def _answer_value(raw):
+    """LeetCode 的 answer 元素是 JSON 字符串（'[0,1]' / '"abc"'），解析成裸值；解析不了原样返回。"""
+    if not isinstance(raw, str):
+        return raw
+    try:
+        return json.loads(raw)
+    except Exception:
+        return raw
+
+
+def _answer_list(raw, count):
+    """把 code_answer / expected_code_answer 解析成裸值列表。
+
+    这两个数组末尾会多带一个 '' 哨兵（有时又不带），所以按 compare_result 的长度截断；
+    没有 compare_result 时退化成去掉末尾的哨兵。
+    """
+    if not isinstance(raw, list):
+        return []
+    vals = [_answer_value(v) for v in raw]
+    if count and len(vals) > count:
+        return vals[:count]
+    while vals and (vals[-1] == '' or vals[-1] is None):
+        vals.pop()
+    return vals
+
+
+def _run_online(code, slug, test_data, meta_obj, example, ext):
+    """把代码发给 LeetCode 跑官方示例（等价网页端 Ctrl+'），返回和离线判题同构的结果列表。
+
+    判定只用服务端返回的 compare_result（逐条 '1' / '0'）：那是网页端的判定，比本地按值
+    严格比较更权威（subsets 这种答案顺序不唯一的题，本地会误判 FAIL）。
+    Run Code 的 status_msg 不可信 —— 答案是错的时候它照样返回 "Accepted"。
+    """
+    if not example or not example.strip():
+        raise Exception('No example testcases in the local JSON; re-fetch this problem first.')
+    lang = EXT_LANG.get(ext, ext)
+    client = _build_client()
+    sid = client.interpret_solution(slug, test_data.get('questionId', ''), lang, code, example)
+    data = client._check_interpret(sid)
+
+    # 编译没过（C++ / Java 等）：用例输入没有意义，也不假装是某一条用例失败
+    compile_err = data.get('full_compile_error') or data.get('compile_error')
+    if compile_err:
+        return [{'input': '', 'output': None, 'stdout': '',
+                 'error': 'Compile Error:\n' + str(compile_err).strip(), 'elapsed': None}]
+
+    testcases = _parse_testcases(example, json.dumps(meta_obj))
+    compare = str(data.get('compare_result') or '')
+    answers = _answer_list(data.get('code_answer'), len(compare))
+    expected = _answer_list(data.get('expected_code_answer'), len(compare))
+    stdout_list = data.get('std_output_list')
+    if not isinstance(stdout_list, list):
+        stdout_list = [data.get('std_output') or '']
+    # Python 的语法错误会被服务端算成 runtime_error，所以两种都收
+    err_text = data.get('full_runtime_error') or data.get('runtime_error') or ''
+
+    def _stdout(i):
+        return stdout_list[i] if i < len(stdout_list) else ''
+
+    def _input_repr(args):
+        return ', '.join(json.dumps(_to_json(a), default=str) for a in args)
+
+    # 崩在第几条：第一条「没有答案」（缺条目或空串）的用例
+    crash = None
+    if err_text:
+        for i in range(len(testcases)):
+            if i >= len(answers) or answers[i] == '':
+                crash = i
+                break
+
+    results = []
+    for i in range(len(testcases) if crash is None else crash):
+        row = {'input': _input_repr(testcases[i]),
+               'output': answers[i] if i < len(answers) else None,
+               'stdout': _stdout(i), 'error': None, 'elapsed': None}
+        if i < len(compare):
+            row['ok'] = compare[i] == '1'
+        if i < len(expected):
+            row['expected'] = expected[i]
+        results.append(row)
+
+    if err_text:
+        if crash is None:
+            # 每条都有答案却还报错（少见）：把错误挂在最后一条上，别把信息丢了
+            if results:
+                results[-1]['error'] = err_text
+                results[-1]['output'] = None
+                results[-1].pop('expected', None)
+                results[-1].pop('ok', None)
+            else:
+                results.append({'input': '', 'output': None, 'stdout': '',
+                                'error': err_text, 'elapsed': None})
+        else:
+            # 和离线判题一样：停在出错的那条
+            results.append({'input': _input_repr(testcases[crash]), 'output': None,
+                            'stdout': _stdout(crash), 'error': err_text, 'elapsed': None})
+
+    if not results:
+        results.append({'input': '', 'output': None, 'stdout': '',
+                        'error': 'LeetCode returned no result.', 'elapsed': None})
+    return results
 
 
 def _read_case_list(path):
