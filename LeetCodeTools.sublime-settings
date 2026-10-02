@@ -14,8 +14,18 @@
     "language": "zh",
 
     // 站点：cn = 力扣中国（leetcode.cn），com = leetcode.com。
+    // Cookie 和缓存（题目列表 / 每题 JSON / 期望输出）都按站点分开存，
+    // 所以两个站各要 Login 一次，切站不会互相覆盖。
     // Site: "cn" for leetcode.cn, "com" for leetcode.com.
+    // Cookies and caches are stored per site: run Login once per site.
     "site": "cn",
+
+    // leetcode.com 的提交 / Run Code 后面有 Cloudflare 人机挑战。cf_clearance 这个 Cookie 是跟
+    // 「拿到它的浏览器 UA」绑定的，所以想让粘贴进来的 cf_clearance 生效，就把你浏览器的
+    // User-Agent 原样粘到这里（要和复制 Cookie 的那个浏览器一致）。留空则用内置的 Chrome UA。
+    // Cloudflare binds cf_clearance to the User-Agent that obtained it; paste your browser's
+    // exact User-Agent here to make a pasted cf_clearance cookie acceptable. Empty = built-in UA.
+    "browser_ua": "",
 
     // 题目列表 / 题集缓存的有效天数，超过后会自动刷新。
     // How many days the problem-list / study-plan cache stays fresh.

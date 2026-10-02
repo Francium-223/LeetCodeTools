@@ -30,6 +30,16 @@ def _base_url():
     return 'https://leetcode.cn' if _site() == 'cn' else 'https://leetcode.com'
 
 
+def _site_key():
+    """缓存 / Cookie 按站点分家的后缀。
+
+    cn 沿用原来的文件名（`cookie.json` / `problem_list.json` / `problems/`…），
+    这样已有用户的 CN 缓存和登录态不用迁移；别的站加后缀（`cookie_com.json` …），
+    免得切站时把两边的题目列表、题目 JSON、期望输出互相覆盖。
+    """
+    return '' if _site() == 'cn' else '_' + _site()
+
+
 def _working_dir():
     return os.path.expanduser(_settings().get('working_dir', '~/leetcode'))
 
@@ -135,7 +145,7 @@ def _cache_dir():
 
 
 def _last_update_path():
-    return os.path.join(_cache_dir(), 'last_update.json')
+    return os.path.join(_cache_dir(), 'last_update' + _site_key() + '.json')
 
 
 def _maybe_auto_update():
@@ -154,23 +164,24 @@ def _maybe_auto_update():
 
 
 def _cookie_cache_path():
-    return os.path.join(_cache_dir(), 'cookie.json')
+    # cn -> cookie.json（保持原样，不用迁移）；com -> cookie_com.json
+    return os.path.join(_cache_dir(), 'cookie' + _site_key() + '.json')
 
 
 def _problem_list_cache_path():
-    return os.path.join(_cache_dir(), 'problem_list.json')
+    return os.path.join(_cache_dir(), 'problem_list' + _site_key() + '.json')
 
 
 def _study_plans_cache_path():
-    return os.path.join(_cache_dir(), 'study_plans.json')
+    return os.path.join(_cache_dir(), 'study_plans' + _site_key() + '.json')
 
 
 def _study_plan_problems_cache_path():
-    return os.path.join(_cache_dir(), 'study_plan_problems.json')
+    return os.path.join(_cache_dir(), 'study_plan_problems' + _site_key() + '.json')
 
 
 def _problem_cache_dir():
-    return os.path.join(_cache_dir(), 'problems')
+    return os.path.join(_cache_dir(), 'problems' + _site_key())
 
 
 def _problem_json_path(slug):
@@ -827,6 +838,37 @@ class LeetCodeToolsClient:
     # ── 官方题解 ──
 
     def _find_official_solution(self, title_slug):
+        """找官方题解。
+
+        cn：questionSolutionArticles 里挑 byLeetcode 的那篇，再按 slug 取正文。
+        com：没有 questionSolutionArticles（会 400: Cannot query field），
+             但 question.solution 直接就是官方 editorial，而且一次就带回 content。
+        """
+        if _site() != 'cn':
+            query = '''
+            query questionSolution($titleSlug: String!) {
+              question(titleSlug: $titleSlug) {
+                solution {
+                  id
+                  title
+                  slug
+                  content
+                }
+              }
+            }
+            '''
+            data = self._graphql(query, {'titleSlug': title_slug})
+            sol = ((data.get('question') or {}).get('solution')) or {}
+            if not (sol.get('slug') or sol.get('title') or sol.get('content')):
+                return None
+            return {
+                'title': sol.get('title') or title_slug,
+                'slug': sol.get('slug') or '',
+                'byLeetcode': True,
+                'topic': None,
+                'content': sol.get('content') or '',
+            }
+
         query = '''
         query questionSolutionArticles($questionSlug: String!, $skip: Int, $first: Int, $orderBy: SolutionArticleOrderBy) {
           questionSolutionArticles(questionSlug: $questionSlug, skip: $skip, first: $first, orderBy: $orderBy) {
@@ -887,23 +929,34 @@ class LeetCodeToolsClient:
         article = self._find_official_solution(title_slug)
         if not article:
             raise ValueError('No official solution found for: ' + title_slug)
-        detail = self._get_solution_detail(article.get('slug') or '')
-        content = _clean_solution_markdown(detail.get('content'), detail.get('videosInfo'))
+        if article.get('content'):
+            # com：正文跟着 question.solution 一起回来了，不用再查一次
+            detail = {}
+            raw = article['content']
+            # com 的 editorial 混着 [TOC] 和 <iframe> 视频块，先规整成人能读的样子
+            raw = re.sub(r'\[TOC\]\s*', '', raw)
+            raw = re.sub(r'^\s*</?div[^>]*>\s*$', '', raw, flags=re.M)
+            raw = re.sub(r'<iframe[^>]*src="([^"]+)"[^>]*>\s*</iframe>', r'[视频 / Video](\1)', raw)
+        else:
+            detail = self._get_solution_detail(article.get('slug') or '')
+            raw = detail.get('content')
+        content = _clean_solution_markdown(raw, detail.get('videosInfo'))
         if not content.strip():
             content = '_（题解内容为空）_'
         img_dir = _explanation_images_dir(title_slug)
         img_ref = os.path.relpath(img_dir, working_dir).replace('\\', '/')
         content = _download_markdown_images(content, img_dir, img_ref)
         # 原文链接
-        topic_id = None
-        topic = article.get('topic')
-        if isinstance(topic, dict):
-            topic_id = topic.get('id')
-        slug = article.get('slug') or ''
         url = _base_url() + '/problems/' + title_slug + '/solutions/'
-        if topic_id:
-            url += str(topic_id) + '/'
-        url += slug + '/'
+        topic = article.get('topic')
+        topic_id = topic.get('id') if isinstance(topic, dict) else None
+        slug = article.get('slug') or ''
+        # com 的 solution.slug 就等于题目 slug，拼出来会 404，所以 com 只给到题解列表页
+        if _site() == 'cn':
+            if topic_id:
+                url += str(topic_id) + '/'
+            if slug:
+                url += slug + '/'
         os.makedirs(working_dir, exist_ok=True)
         md_path = os.path.join(working_dir, title_slug + '_explanation.md')
         with open(md_path, 'w', encoding='utf-8') as f:
@@ -1026,28 +1079,52 @@ class LeetCodeToolsClient:
     # ── 每日一题 ──
 
     def get_daily_question(self):
-        """获取今日的每日一题，返回 {frontendQuestionId, titleSlug, title, difficulty}。"""
-        query = '''
-        query questionOfToday {
-          todayRecord {
-            date
-            question {
-              questionId
-              questionFrontendId
-              difficulty
-              title
-              translatedTitle
-              titleSlug
-              isPaidOnly
+        """获取今日的每日一题，返回 {frontendQuestionId, titleSlug, title, difficulty}。
+
+        两个站的字段名不一样：cn 是 todayRecord，com 是 activeDailyCodingChallengeQuestion
+        （com 上查 todayRecord 会 400: Cannot query field）。
+        """
+        if _site() == 'cn':
+            query = '''
+            query questionOfToday {
+              todayRecord {
+                date
+                question {
+                  questionId
+                  questionFrontendId
+                  difficulty
+                  title
+                  translatedTitle
+                  titleSlug
+                  isPaidOnly
+                }
+              }
             }
-          }
-        }
-        '''
-        data = self._graphql(query)
-        records = data.get('todayRecord') or []
-        if not records:
-            raise ValueError('No daily question found.')
-        q = records[0].get('question') or {}
+            '''
+            data = self._graphql(query)
+            records = data.get('todayRecord') or []
+            if not records:
+                raise ValueError('No daily question found.')
+            q = records[0].get('question') or {}
+        else:
+            query = '''
+            query questionOfToday {
+              activeDailyCodingChallengeQuestion {
+                date
+                question {
+                  questionId
+                  questionFrontendId
+                  difficulty
+                  title
+                  titleSlug
+                }
+              }
+            }
+            '''
+            data = self._graphql(query)
+            q = (data.get('activeDailyCodingChallengeQuestion') or {}).get('question') or {}
+            if not q:
+                raise ValueError('No daily question found.')
         return {
             'frontendQuestionId': str(q.get('questionFrontendId', '')),
             'titleSlug': q.get('titleSlug') or '',
@@ -1818,40 +1895,50 @@ class LeetcodeLoginCommand(sublime_plugin.WindowCommand):
         except Exception as e:
             sublime.error_message('Failed to open browser:\n' + str(e))
             return
+        us_note = ''
+        if _site() != 'cn':
+            us_note = (
+                '⚠ leetcode.com 建议粘「整条 Cookie」：Cloudflare 的人机挑战凭证 cf_clearance（还有 __cf_bm）\n'
+                '   只存在于这一整条里。只贴 LEETCODE_SESSION 的话，搜题 / 拉题 / 离线 Run 都能用，\n'
+                '   但 Submit 和 Run Online 会被 403 挑战挡下。\n'
+                '   如果还填了 browser_ua，记得和复制 Cookie 的那个浏览器保持一致。\n\n'
+                'On leetcode.com paste the WHOLE cookie: the Cloudflare cf_clearance token only\n'
+                'travels with the full header. Session-only cookies still search/fetch/run offline,\n'
+                'but Submit and Run Online will hit a 403 challenge.\n\n')
         sublime.message_dialog(
-            'LeetCode Tools 登录 / Login\n\n'
+            'LeetCodeTools 登录 / Login —— ' + base + '\n\n'
             '中文：\n'
-            '1. 在浏览器里登录 ' + base + '\n'
-            '2. 按 F12 打开开发者工具\n'
-            '3. 点顶部「应用 / Application」标签（Firefox 叫「存储 / Storage」）\n'
-            '4. 左侧展开「Cookies」，点 ' + base + '\n'
-            '5. 找到 LEETCODE_SESSION 这一行\n'
-            '6. 双击它的「值 / Value」格子 → 按 Ctrl+A 全选 → Ctrl+C 复制\n'
-            '7. 回到 Sublime，粘贴到输入框，按回车\n\n'
+            '1. 在浏览器里登录 ' + base + '（页面能正常打开，说明已经过掉 Cloudflare）\n'
+            '2. 按 F12 → 选「网络 / Network」标签 → 刷新一次页面\n'
+            '3. 点左侧任意一个 ' + base + ' 的请求\n'
+            '4. 右侧找「请求标头 / Request Headers」→ 找到 Cookie 这一行\n'
+            '5. 双击它的值 → Ctrl+A 全选 → Ctrl+C 复制\n'
+            '   （很长，务必全选；一定要从「请求标头」复制，不要从响应头的 Set-Cookie 复制）\n'
+            '6. 回到 Sublime，粘进输入框，回车\n\n'
+            '（leetcode.cn 只贴 LEETCODE_SESSION 的值也能用；整条粘更好。）\n\n'
+            + us_note +
             'English:\n'
             '1. Log in to ' + base + ' in your browser.\n'
-            '2. Press F12 to open the developer tools.\n'
-            '3. Click the "Application" tab (called "Storage" in Firefox).\n'
-            '4. In the left panel, expand "Cookies" and click ' + base + '.\n'
-            '5. Find the LEETCODE_SESSION row.\n'
-            '6. Double-click its "Value" cell, press Ctrl+A to select all, then Ctrl+C to copy.\n'
-            '7. Back in Sublime, paste it into the input box and press Enter.\n\n'
-            '注意 / Note:\n'
-            'LEETCODE_SESSION 是登录凭证，值很长，一定要 Ctrl+A 全选，否则只复制到一半会登录失败。\n'
-            'LEETCODE_SESSION is the login token; it is very long, so press Ctrl+A to select the whole value, or the login will fail.'
+            '2. F12 → Network tab → reload the page.\n'
+            '3. Click any request to ' + base + '.\n'
+            '4. Request Headers → find the Cookie line.\n'
+            '5. Double-click its value → Ctrl+A → Ctrl+C (it is long).\n'
+            '   Copy from Request Headers, never from a Set-Cookie response header.\n'
+            '6. Paste it into the input box and press Enter.'
         )
         self.window.show_input_panel(
-            '粘贴 LEETCODE_SESSION 的值（或整个 Cookie）:',
+            '粘贴 Cookie（推荐整条 Request Headers 的 Cookie / paste the whole Cookie header）:',
             '', self._on_cookie, None,
             lambda: sublime.status_message('LeetCodeTools: Login cancelled'))
 
     def _on_cookie(self, text):
         try:
             data = _save_cookie_from_text(text)
-        except Exception as e:
+        except Exception:
             sublime.error_message(
-                'LeetCodeTools: 没识别出 LEETCODE_SESSION。\n\n'
-                '请复制 ' + _base_url() + ' 的 LEETCODE_SESSION「值 / Value」再试。')
+                'LeetCodeTools: 没识别出登录凭证。\n\n'
+                '请从 ' + _base_url() + ' 的「F12 → Network → Request Headers → Cookie」\n'
+                '整条复制（里面要有 LEETCODE_SESSION=很长一串），再运行一次 Login。')
             return
 
         sublime.status_message('LeetCodeTools: Verifying cookie...')
@@ -1860,16 +1947,28 @@ class LeetcodeLoginCommand(sublime_plugin.WindowCommand):
             return _validate_cookie(data)
 
         def done(window, ok):
-            if ok:
-                sublime.status_message('LeetCodeTools: Login successful!')
-            else:
+            if not ok:
                 sublime.error_message(
                     'LeetCodeTools: 没登录成功。\n\n'
                     '请确认：\n'
-                    '1. 已经登录 ' + _base_url() + '\n'
-                    '2. 复制的是 LEETCODE_SESSION 的值（Value），不是名字（Name）\n'
-                    '3. 别复制成 csrftoken 或别的\n\n'
+                    '1. 浏览器里已经登录 ' + _base_url() + '\n'
+                    '2. 复制的是「Request Headers → Cookie」的整条值\n'
+                    '   （不是 Cookie 列表里的单个值，也不是响应头的 Set-Cookie）\n'
+                    '3. 里面确实有 LEETCODE_SESSION=\n\n'
                     '再运行一次 Login 重试。')
+                return
+            warn = ''
+            if _site() != 'cn':
+                all_cookies = data.get('all') or {}
+                missing = [k for k in ('cf_clearance', '__cf_bm') if not all_cookies.get(k)]
+                if missing:
+                    warn = ('\n\n⚠ 这条 Cookie 里没有 ' + ' / '.join(missing) + '。\n'
+                            '搜题、拉题、离线 Run 都正常；但 Submit / Run Online 很可能被 Cloudflare 挑战拦下。\n'
+                            '想提交的话：在浏览器里打开一道题并提交或运行一次（过掉人机挑战），\n'
+                            '再从同一个浏览器复制整条 Cookie 重新 Login（并让 browser_ua 与之一致）。')
+            sublime.status_message('LeetCodeTools: Login successful!')
+            if warn:
+                sublime.message_dialog('LeetCodeTools: 登录成功' + warn)
 
         _run_in_thread(self.window, work, _on_done=done)
 

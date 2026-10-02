@@ -31,11 +31,11 @@ LeetCodeTools 是一个 [Sublime Text](https://www.sublimetext.com/) 插件，�
 3. Install a system **Python 3** and add it to PATH. It is required by the offline Run (not by Login).
    安装一个系统 **Python 3** 并加入 PATH。离线 Run 需要它（登录不需要）。
 
-4. Press `Ctrl+Shift+P`, run `LeetCode Tools: Login`; it opens leetcode.cn in your browser. Log in, then copy the `LEETCODE_SESSION` cookie (F12 → Application → Cookies → `LEETCODE_SESSION`; double-click its Value and press Ctrl+A to select it all) and paste it into the input panel.
-   按 `Ctrl+Shift+P`，运行 `LeetCode Tools: Login`；它会在浏览器打开 leetcode.cn，登录后复制 `LEETCODE_SESSION` cookie（F12 → Application → Cookies → `LEETCODE_SESSION`，双击 Value 后 Ctrl+A 全选）粘贴到输入框即可。
+4. Press `Ctrl+Shift+P`, run `LeetCode Tools: Login`; it opens the site in your browser. Log in, then press F12 → **Network** → reload → click any request → **Request Headers → `Cookie`** → select the whole value (`Ctrl+A`) → copy. Paste it into the input panel. Copy it from **Request Headers**, never from a `Set-Cookie` response header: only the request header carries the `cf_clearance` / `__cf_bm` cookies that Cloudflare issues — leetcode.com needs them for `Submit` / `Run Online`.
+   按 `Ctrl+Shift+P`，运行 `LeetCode Tools: Login`；它会在浏览器打开站点。登录后按 F12 → **Network（网络）** → 刷新 → 点任意一个请求 → **Request Headers（请求标头）→ `Cookie`** → 双击值后 `Ctrl+A` 全选复制，粘进输入框。注意要从**请求标头**复制，不要从响应头的 `Set-Cookie` 复制：只有请求头那一份才带 Cloudflare 发的 `cf_clearance` / `__cf_bm`，leetcode.com 的 `Submit` / `Run Online` 需要它。
 
-> Note: Search / Update / Submit need the login cookie; Open in Browser, Run, and Fetch Official Explanations do not (the official solution uses the public GraphQL API).
-> 说明：Search / Update / Submit 需要登录 Cookie；Open in Browser、Run、Fetch Official Explanations 不需要登录（其中官方题解走的是公开 GraphQL 接口）。
+> Note: Search / Update / Submit / Run Online need the login cookie; Open in Browser, Run, and Fetch Official Explanations do not (the official solution uses the public GraphQL API).
+> 说明：Search / Update / Submit / Run Online 需要登录 Cookie；Open in Browser、Run、Fetch Official Explanations 不需要登录（其中官方题解走的是公开 GraphQL 接口）。
 
 ## Configuration / 配置
 
@@ -47,7 +47,8 @@ Settings are edited via `Preferences: LeetCodeTools Settings` in the command pal
 | `working_dir` | `~/leetcode` | Where problems are saved. 题目保存目录 |
 | `default_lang` | `python3` | Default language used when fetching a problem. 拉题时的默认语言 |
 | `language` | `zh` | Problem language (`zh` / `en`). 题目语言（`zh` / `en`） |
-| `site` | `cn` | `cn` = leetcode.cn; `com` = leetcode.com (**read-only**: search/fetch work, but Submit and the offline expected outputs are blocked by Cloudflare). `cn` = leetcode.cn；`com` = leetcode.com（**只读**：搜题/拉题可用，但提交和离线预期输出被 Cloudflare 拦截，不可用） |
+| `site` | `cn` | `cn` = leetcode.cn; `com` = leetcode.com. Cookies and caches are stored per site, so each site needs its own `Login` and switching never mixes them. `cn` = leetcode.cn；`com` = leetcode.com。Cookie 和缓存按站点分开存，两个站各要 `Login` 一次，切站不会互相覆盖 |
+| `browser_ua` | `""` | User-Agent used for requests. Leave empty for a built-in Chrome UA; set it to your own browser's exact UA when you want a pasted `cf_clearance` to be accepted (see the leetcode.com note below). 请求使用的 User-Agent。留空用内置 Chrome UA；想让粘贴的 `cf_clearance` 生效就填自己浏览器的 UA（见下方 leetcode.com 说明） |
 | `cache_age_days` | `7` | Cache age in days for the problem list and study plans; auto-refreshes when expired. 题目列表与题集的缓存天数，过期自动刷新 |
 | `run_timeout` | `1` | Time limit in seconds for the offline Run (0 = no limit). 离线 Run 的超时秒数（0 表示不限时） |
 
@@ -108,20 +109,27 @@ User-facing files go under `working_dir`; the plugin's internal files go into th
 
 **In the cache `{working_dir}/.cache/`（在缓存目录下）:**
 
+Everything cache-side is **per site**: `leetcode.cn` keeps the plain names below, other sites get a
+`_com` suffix (`cookie_com.json`, `problems_com/`, …), so switching `site` never mixes the two.
+缓存文件都是**按站点分开**的：`leetcode.cn` 用下面这些名字，其它站点带 `_com` 后缀（`cookie_com.json`、`problems_com/` …），切站不会互相覆盖。
+
 | File 文件 | Content 内容 |
 |------|------|
-| `problems/{slug}.json` | Metadata (id / metaData / examples). 元数据（题号 / metaData / 示例用例） |
-| `problems/{slug}_in.json` | Parsed input cases. 解析后的输入用例 |
-| `problems/{slug}_out.json` | Expected outputs. 预期输出 |
-| `images/{slug}/` | Problem-description images. 题目描述的图片 |
-| `images/{slug}_explanation/` | Official-solution images. 官方题解的图片 |
+| `cookie.json` (cn) / `cookie_com.json` (com) | Login cookie for that site. 该站点的登录 Cookie |
+| `problem_list.json` / `problem_list_com.json` | Cached problem list. 题目列表缓存 |
+| `problems[_com]/{slug}.json` | Metadata (id / metaData / examples). 元数据（题号 / metaData / 示例用例） |
+| `problems[_com]/{slug}_in.json` | Parsed input cases. 解析后的输入用例 |
+| `problems[_com]/{slug}_out.json` | Expected outputs. 预期输出 |
+| `images/{slug}/` | Problem-description images (shared). 题目描述的图片（共用） |
+| `images/{slug}_explanation/` | Official-solution images (shared). 官方题解的图片（共用） |
 
 ## Current limitations / 当前限制
 
-- Offline **Run currently supports only Python**: the local judge runs your code with Python `exec` and includes built-in parsing for `ListNode` / `TreeNode` / `Node`. Other languages (java / cpp / javascript / golang, …) can only fetch templates and submit — not run locally.
-- **离线 Run 目前仅支持 Python**：本地判题用 Python `exec` 运行你的代码，并内置了 `ListNode` / `TreeNode` / `Node` 的用例解析。其它语言（java / cpp / javascript / golang 等）目前只能拉取代码模板和 Submit 提交，不能本地 Run。
-- Only the China site ([leetcode.cn](https://leetcode.cn)) is supported; the global site ([leetcode.com](https://leetcode.com)) is planned but not yet implemented.
-- 目前只支持中国版（[leetcode.cn](https://leetcode.cn)）；美国版/国际版（[leetcode.com](https://leetcode.com)）待实现。
+- Offline **Run currently supports only Python**: the local judge runs your code with Python `exec` and includes built-in parsing for `ListNode` / `TreeNode` / `Node`. Other languages (java / cpp / javascript / golang, …) can be run with `LeetCode Tools: Run Online` (LeetCode executes them) or submitted with `Submit` — they just cannot run locally.
+- **离线 Run 目前仅支持 Python**：本地判题用 Python `exec` 运行你的代码，并内置了 `ListNode` / `TreeNode` / `Node` 的用例解析。其它语言（java / cpp / javascript / golang 等）可以用 `LeetCode Tools: Run Online`（交给力扣执行）或 `Submit` 提交，只是不能本地跑。
+- On **leetcode.com**, everything except `Submit` and `Run Online` works with a normal login: search, fetch, study plans, daily question and official explanations all use the public API (the plugin's queries are site-aware). The two write endpoints — `/problems/<slug>/submit/` and `/problems/<slug>/interpret_solution/` — sit behind a **Cloudflare managed challenge** (`cf-mitigated: challenge`, HTTP 403) and only a browser's `cf_clearance` cookie gets through it. If Cloudflare challenges a request the error message says exactly that. To give it the best chance: pass the challenge in your browser, run `Login` and paste the **whole `Cookie` request header** (so `cf_clearance` / `__cf_bm` come along), and set `browser_ua` to that same browser's User-Agent — Cloudflare binds `cf_clearance` to the UA (and IP) that obtained it. Without it, `Submit` / `Run Online` will keep failing, and the offline `Run` can only show your own outputs (no `EXPECT` lines, and the panel says `no expected outputs, nothing compared` instead of faking failures).
+- **leetcode.com** 上除了 `Submit` 和 `Run Online`，其余都能用正常登录跑通：搜题、拉题、题集、每日一题、官方题解走的都是公开接口（插件里的查询已按站点区分）。只有两个写接口 —— `/problems/<slug>/submit/` 和 `/problems/<slug>/interpret_solution/` —— 后面是 **Cloudflare 托管挑战**（`cf-mitigated: challenge` / HTTP 403），只有浏览器的 `cf_clearance` 能过。真被挑战时，报错里会直接写明。想尽量过掉：先在浏览器里过掉挑战，再运行 `Login` 并粘**整条 `Cookie` 请求头**（这样 `cf_clearance` / `__cf_bm` 才带上），同时把 `browser_ua` 设成同一个浏览器的 User-Agent —— Cloudflare 的 `cf_clearance` 和拿到它的 UA（以及 IP）是绑定的。搞不定的话 `Submit` / `Run Online` 会一直失败，离线 `Run` 也只能看到你自己的输出（没有 `EXPECT` 行，面板会写 `no expected outputs, nothing compared`，而不是假装全错）。
+- Only the China site ([leetcode.cn](https://leetcode.cn)) is fully supported; the global site ([leetcode.com](https://leetcode.com)) works for everything the public API allows, and for `Submit` / `Run Online` as far as Cloudflare lets it through.
 
 ## Roadmap / 待办
 
