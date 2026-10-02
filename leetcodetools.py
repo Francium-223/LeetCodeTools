@@ -398,21 +398,26 @@ def _clean_solution_markdown(md, videos=None):
 
 # ==================== Cookie & API helpers ====================
 
-# 从 DevTools 复制出来的各种形态里抠 cookie：表头一行 / Copy as cURL / Copy as fetch
+# 从 DevTools 复制出来的各种形态里抠 cookie：表头一行 / Copy as cURL(bash|cmd) / Copy as fetch
 #
-# 三种写法都要认：
-#   -H 'cookie: 值'      cURL（bash/cmd 都是引号包住整个「名字: 值」）
-#   "cookie": "值"       Copy as fetch（值自己带引号）
-#   Cookie: 值           裸表头 / 或者就贴了值本身
-_COOKIE_IN_TEXT_RE = re.compile(
-    r'''(?isx)
-    (?:
-        (?P<oq>["']) \s* \bcookie\b \s* : \s* (?P<whole>.*?) (?P=oq)
-      | \bcookie\b \s* ["']? \s* : \s*
-        (?: (?P<q>["']) (?P<quoted>.*?) (?P=q) | (?P<bare>[^\n]*) )
-    )''')
-_COOKIE_FLAG_RE = re.compile(
-    r'''(?is)(?:-b|--cookie)\s+(?:(?P<q>["'])(?P<quoted>.*?)(?P=q)|(?P<bare>\S+))''')
+# 按「行」找 `cookie:` 再取这一行剩下的部分，而不是拿引号配对：
+# cmd 的 Copy as cURL 把整条写成 `-H ^"Cookie: …^"`，而且值里面本身就可能有
+# `^\^"`（比如 ip_check=(true, ^\^"1.2.3.4^\^")）、`^|`、`^%^22` 这些转义，
+# 用引号配对会在第一个 `"` 处截断，直接把 LEETCODE_SESSION 丢掉。
+_COOKIE_LINE_RE = re.compile(r'''(?i)\bcookie\b\s*["']?\s*:\s*''')
+_COOKIE_FLAG_RE = re.compile(r'''(?is)(?:-b|--cookie)\s+(?P<rest>[^\n]*)''')
+_LEAD_JUNK_RE = re.compile(r'''^[\s"']+''')
+_TAIL_JUNK_RE = re.compile(r'''[\s"',;\\^]+$''')
+
+
+def _clean_cookie_value(value, cmd_escaped=False):
+    """洗掉外层引号 / 续行符 / 结尾逗号，并把 cmd 的 ^ 转义还原（^" -> "，^| -> |，^% -> %）。"""
+    value = _LEAD_JUNK_RE.sub('', value or '')
+    value = _TAIL_JUNK_RE.sub('', value)
+    if cmd_escaped:
+        value = re.sub(r'\^(.)', r'\1', value)
+        value = _TAIL_JUNK_RE.sub('', value)
+    return re.sub(r'[\r\n\t]+', '', value).strip()
 
 
 def _extract_cookie_text(text):
@@ -420,28 +425,22 @@ def _extract_cookie_text(text):
 
     支持的粘法（都是 DevTools 里点两下就能拿到的，省得手动全选一长串）：
       * 裸的 Cookie 值：`LEETCODE_SESSION=…; csrftoken=…`
-      * 表头一行：`Cookie: LEETCODE_SESSION=…`
-      * **Copy as cURL**：`-H 'cookie: …'` / `-H "cookie: …"` / `-b '…'` / `--cookie "…"`
+      * 表头一行：`Cookie: …`（Request Headers 里那一行）
+      * **Copy as cURL**：bash `-H 'cookie: …'`、Windows cmd `-H ^"Cookie: …^"`、`-b '…'` / `--cookie '…'`
       * **Copy as fetch**：`"cookie": "…"`
     抠不出来（比如只贴了一个 session 值）就原样返回，交给下面按老逻辑处理。
     """
     raw = (text or '').replace('\r\n', '\n').replace('\r', '\n')
-    for rx in (_COOKIE_IN_TEXT_RE, _COOKIE_FLAG_RE):
-        m = rx.search(raw)
-        if not m:
-            continue
-        value = None
-        for key in ('whole', 'quoted'):
-            try:
-                value = m.group(key)
-            except IndexError:
-                value = None
-            if value is not None:
-                break
-        if value is None:
-            value = m.group('bare') or ''
-        # 值被终端折行时中间会插换行，直接去掉（cookie 值里不会真有换行）
-        value = re.sub(r'[\r\n\t]+', '', value).strip()
+    cmd_escaped = '^"' in raw          # Windows cmd 的 Copy as cURL 把引号写成 ^"
+    for line in raw.split('\n'):
+        m = _COOKIE_LINE_RE.search(line)
+        if m:
+            value = _clean_cookie_value(line[m.end():], cmd_escaped)
+            if value:
+                return value
+    m = _COOKIE_FLAG_RE.search(raw)    # curl -b '…' / --cookie '…'
+    if m:
+        value = _clean_cookie_value(m.group('rest'), cmd_escaped)
         if value:
             return value
     return raw
