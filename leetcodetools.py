@@ -2027,13 +2027,16 @@ class LeetcodeLoginCommand(sublime_plugin.WindowCommand):
             warn = ''
             if _site() != 'cn':
                 all_cookies = data.get('all') or {}
-                missing = [k for k in ('cf_clearance', '__cf_bm') if not all_cookies.get(k)]
-                if missing:
-                    warn = ('\n\n⚠ 这条 Cookie 里没有 ' + ' / '.join(missing) + '。\n'
+                # 只看 cf_clearance。__cf_bm 是 30 分钟一换的短期 bot cookie，
+                # 请求里经常压根没有，缺了不代表提交会被拦，别误报。
+                if not all_cookies.get('cf_clearance'):
+                    warn = ('\n\n⚠ 这条 Cookie 里没有 cf_clearance，'
+                            '而它正是 Cloudflare 认你已经过了人机挑战的凭证。\n'
                             '搜题、拉题、离线 Run 都正常；但 Submit / Run Online 很可能被 Cloudflare 挑战拦下。\n'
                             '想提交的话：在浏览器里打开一道题并提交或运行一次（过掉人机挑战），\n'
                             '再从同一个浏览器复制整条 Cookie 重新 Login（并让 browser_ua 与之一致）。\n\n'
-                            '⚠ This cookie has no ' + ' / '.join(missing) + '.\n'
+                            '⚠ This cookie has no cf_clearance, which is the token Cloudflare issues once\n'
+                            'you have passed its human check.\n'
                             'Search / fetch / offline Run still work, but Submit and Run Online will most\n'
                             'likely be blocked by a Cloudflare challenge.\n'
                             'To give it a chance: open a problem in the browser and submit or run once (to\n'
