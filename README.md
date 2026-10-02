@@ -14,6 +14,8 @@ LeetCodeTools 是一个 [Sublime Text](https://www.sublimetext.com/) 插件，�
 | `LeetCode Tools: Update` | Rebuild the local problem-list and study-plan caches. 重建本地题目列表和题集缓存 |
 | `LeetCode Tools: Run` | Run your code offline and compare with the official examples. 离线运行代码，与官方示例对比 |
 | `LeetCode Tools: Run Online` | Same output as Run, but executed by LeetCode (like `Ctrl+'` in the web editor); works for every language, needs the login cookie. 输出格式和 Run 一致，但代码发到力扣跑（等价网页端 `Ctrl+'`）；支持所有语言，需要登录 Cookie |
+| `LeetCode Tools: Reload Problem` | Force-refetch the current problem: the statement is overwritten and `_in.json` / `_out.json` are regenerated (the "insert return stubs and Run Code" step included). Your own solution file is kept. 强制重拉当前题：题面覆盖、用例与期望输出重新抓（含"插空返回值骗 Run Code"那一步）；你自己写的解法不会被换掉 |
+| `LeetCode Tools: Edit Testcases` | Open the current problem's `_in.json` (inputs) and `_out.json` (expected outputs) for editing. 打开当前题的 `_in.json`（输入用例）和 `_out.json`（期望输出）直接编辑 |
 | `LeetCode Tools: Submit` | Submit the current code to LeetCode for judging. 把当前代码提交到力扣判题 |
 | `LeetCode Tools: Open in Browser` | Open the current problem's page in the browser. 在浏览器打开当前题目的网页 |
 | `LeetCode Tools: Fetch Official Explanations` | Fetch the official solution as `xxx_explanation.md`. 拉取官方题解为 `xxx_explanation.md` |

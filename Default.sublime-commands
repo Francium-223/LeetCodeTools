@@ -8,6 +8,8 @@
     { "caption": "LeetCodeTools: Update", "command": "leetcode_update" },
     { "caption": "LeetCodeTools: Run",    "command": "leetcode_run" },
     { "caption": "LeetCodeTools: Run Online", "command": "leetcode_run_online" },
+    { "caption": "LeetCodeTools: Reload Problem",    "command": "leetcode_reload" },
+    { "caption": "LeetCodeTools: Edit Testcases",    "command": "leetcode_edit_testcases" },
     { "caption": "LeetCodeTools: Submit", "command": "leetcode_submit" },
     {
         "caption": "Preferences: LeetCodeTools Settings",

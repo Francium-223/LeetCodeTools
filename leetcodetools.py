@@ -880,9 +880,9 @@ class LeetCodeToolsClient:
         testcases = _parse_testcases(example, meta_str)
         question_id = detail.get('questionId', '')
 
-        # 检查缓存是否有效
-        need_interpret = True
-        if os.path.exists(out_path) and os.path.exists(in_path):
+        # 检查缓存是否有效（force = 强制重抓：题面、代码模板、测试用例全部重新来过）
+        need_interpret = bool(force)
+        if not need_interpret and os.path.exists(out_path) and os.path.exists(in_path):
             try:
                 with open(out_path) as f:
                     cached = json.load(f)
@@ -917,6 +917,11 @@ class LeetCodeToolsClient:
                         'LeetCodeTools: no expected outputs (Run Code blocked) — ' + str(e)[:80])
                 # None = "这条没有期望值"：面板里就不显示 EXPECT，也不会算出假的 FAIL
                 outputs = [None] * len(testcases)
+            # 这次没抓到就别拿空值覆盖原来抓好的（force 重抓时尤其重要）
+            if all(v is None or v == '' for v in outputs):
+                cached = _read_case_list(out_path)
+                if any(v is not None and v != '' for v in cached):
+                    outputs = cached
             with open(in_path, 'w', encoding='utf-8') as f:
                 serializable = []
                 for tc in testcases:
@@ -2221,6 +2226,70 @@ class LeetcodeSearchCommand(sublime_plugin.WindowCommand):
                 sublime.status_message('LeetCodeTools: #' + str(fid) + ' fetched')
 
         _run_in_thread(self.window, work, _on_done=done)
+
+
+# ─── Reload Problem / Edit Testcases ───
+
+class LeetcodeReloadCommand(sublime_plugin.TextCommand):
+    """强制把当前这道题重拉一遍：题面覆盖、测试用例重抓（含"空返回值骗期望值"那一步）。
+
+    你自己写的那份代码不会被换掉 —— 只有题面、元数据和用例是强制覆盖的。
+    """
+
+    def run(self, edit):
+        fp = self.view.file_name()
+        if not fp:
+            sublime.error_message('Save the file first.')
+            return
+        window = self.view.window()
+        slug = _detect_slug(fp)
+        ext = os.path.splitext(fp)[1].lstrip('.')
+        lang = EXT_LANG.get(ext) or _default_lang()
+        try:
+            # 取缓冲区里的内容（含未保存的修改），等会儿原样放回去
+            mine = self.view.substr(sublime.Region(0, self.view.size()))
+        except Exception:
+            mine = None
+
+        def work(window):
+            sublime.status_message('LeetCodeTools: Reloading ' + slug + '...')
+            result = _build_client().fetch_problem(slug, lang=lang, force=True)
+            if mine is not None:
+                try:
+                    with open(fp, 'w', encoding='utf-8') as f:
+                        f.write(mine)
+                except Exception:
+                    pass
+            return result
+
+        def done(window, result):
+            for k in ('md_path', 'code_path'):
+                if result.get(k):
+                    window.open_file(result[k])
+            sublime.status_message('LeetCodeTools: ' + slug + ' reloaded')
+
+        _run_in_thread(window, work, _on_done=done)
+
+
+class LeetcodeEditTestcasesCommand(sublime_plugin.TextCommand):
+    """打开当前题的 `_in.json` / `_out.json`（用例输入 / 期望输出）直接改。"""
+
+    def run(self, edit):
+        fp = self.view.file_name()
+        if not fp:
+            sublime.error_message('Save the file first.')
+            return
+        slug = _detect_slug(fp)
+        paths = [p for p in (_problem_in_path(slug), _problem_out_path(slug)) if os.path.exists(p)]
+        if not paths:
+            sublime.error_message(
+                'No testcases for ' + slug + ' yet.\n'
+                'Run "LeetCodeTools: Reload Problem" first to generate them.')
+            return
+        window = self.view.window()
+        for p in paths:
+            window.open_file(p)
+        sublime.status_message('LeetCodeTools: opened ' + str(len(paths)) + ' testcase file(s)')
 
 
 # ─── Run (Offline Judge / LeetCode Run Code) ───
