@@ -859,8 +859,7 @@ class LeetCodeToolsClient:
                     sublime.error_message('LeetCodeTools: interpret failed\n\n' + str(e))
                 else:
                     sublime.status_message(
-                        'LeetCodeTools: 没拿到官方期望输出（.com 上 Run Code 被 Cloudflare 挡住时属正常）— '
-                        + str(e)[:80])
+                        'LeetCodeTools: no expected outputs (Run Code blocked) — ' + str(e)[:80])
                 # None = "这条没有期望值"：面板里就不显示 EXPECT，也不会算出假的 FAIL
                 outputs = [None] * len(testcases)
             with open(in_path, 'w', encoding='utf-8') as f:
@@ -2110,9 +2109,9 @@ class LeetcodeLoginCommand(sublime_plugin.WindowCommand):
                             'To give it a chance: open a problem in the browser and submit or run once (to\n'
                             'pass the challenge), then copy the whole Cookie from that same browser and run\n'
                             'Login again (and set browser_ua to match that browser).')
-            sublime.status_message('LeetCodeTools: 登录成功 / Login successful')
+            sublime.status_message('LeetCodeTools: Login successful')
             if warn:
-                sublime.message_dialog('LeetCodeTools: 登录成功 / Login successful' + warn)
+                sublime.message_dialog('LeetCodeTools: Login successful' + warn)
 
         _run_in_thread(self.window, work, _on_done=done)
 
