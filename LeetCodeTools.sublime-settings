@@ -3,8 +3,8 @@
     // Where problem files (.md / .py) and the cache (.cache/) are saved.
     "working_dir": "~/leetcode",
 
-    // 拉题时的默认语言（Fetch 未指定时使用）。支持的 slug：
-    // Default language slug used by Fetch when none is given. Supported slugs:
+    // 拉题时的默认语言。支持的 slug：
+    // Default language slug used when fetching a problem. Supported slugs:
     //   python3, python, java, cpp, c, csharp, javascript,
     //   typescript, golang, rust, kotlin, swift, scala, ruby, php
     "default_lang": "python3",

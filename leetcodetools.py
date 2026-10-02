@@ -38,6 +38,90 @@ def _default_lang():
     return _settings().get('default_lang', 'python3')
 
 
+# ─── HTTP：统一的浏览器化请求头 + 重试 ───
+#
+# LeetCode 前面挂着 Cloudflare，裸的 'Mozilla/5.0'、缺 Host/Accept 的请求很容易被判成
+# 机器人：轻则 403，重则直接给一段挑战页。这里照 leetcode.nvim 的做法，每个请求都带上
+# 一整套浏览器头，并对 5xx / 429 退避重试（比赛期间 LeetCode 会临时 503 / 429）。
+
+_BROWSER_UA = ('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 '
+               '(KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36')
+
+
+def _browser_ua():
+    """User-Agent：设置里的 browser_ua 优先。
+
+    Cloudflare 的 cf_clearance 是跟拿到它的 UA（和 IP）绑定的，UA 对不上就会被当成
+    无效 clearance 再挑战一次。所以想让粘贴进来的 cf_clearance 生效，就填自己浏览器的 UA。
+    """
+    return (_settings().get('browser_ua', '') or '').strip() or _BROWSER_UA
+
+
+def _browser_headers(path='/', cookie_raw='', csrf_token='',
+                     accept='application/json, text/plain, */*', json_body=True, host=True, extra=None):
+    """构造一份像浏览器的请求头；path 是接口/题目页路径，用来拼 Referer。"""
+    base = _base_url()
+    if not path.startswith('/'):
+        path = '/' + path
+    headers = {
+        'User-Agent': _browser_ua(),
+        'Accept': accept,
+        'Accept-Language': 'zh-CN,zh;q=0.9,en-US;q=0.8,en;q=0.7',
+        'Origin': base,
+        'Referer': base + path,
+    }
+    if host:
+        headers['Host'] = base.split('//', 1)[1].rstrip('/')
+    if json_body:
+        headers['Content-Type'] = 'application/json'
+    if cookie_raw:
+        headers['Cookie'] = cookie_raw
+    if csrf_token:
+        headers['X-CSRFToken'] = csrf_token
+    if extra:
+        headers.update(extra)
+    return headers
+
+
+def _http_error_text(e, what='Request'):
+    """把 HTTPError 翻成人话。"""
+    body = ''
+    try:
+        body = e.read().decode('utf-8', 'replace').strip()[:400]
+    except Exception:
+        pass
+    mitigated = ''
+    try:
+        mitigated = (e.headers.get('cf-mitigated') or '') if e.headers else ''
+    except Exception:
+        pass
+    if mitigated or 'Just a moment' in body or 'cf-chl' in body:
+        return ('%s HTTP %d: 被 Cloudflare 的人机挑战拦住了（cf-mitigated: %s）。\n'
+                'leetcode.com 的提交 / Run Code 恰好就在这道门后面：先在浏览器里过完挑战，'
+                '再把「请求头里的完整 Cookie」（要含 cf_clearance / __cf_bm）粘给 Login，'
+                '并把设置里的 browser_ua 填成同一个浏览器的 User-Agent（clearance 和 UA 绑定）。'
+                % (what, e.code, mitigated or 'challenge'))
+    if e.code in (401, 403):
+        return ('%s HTTP %d: cookie 可能已过期，或者 LeetCode 临时限制了 API 访问'
+                '（比赛期间常见；也可以试试关掉 VPN）。%s' % (what, e.code, body))
+    return '%s HTTP %d: %s' % (what, e.code, body)
+
+
+def _urlopen_retry(req, timeout=30, tries=5, wait=1.0):
+    """发请求；5xx / 429 退避重试，其它 HTTP 错误直接抛（让调用方翻译成人话）。"""
+    attempt = 0
+    while True:
+        try:
+            return urllib.request.urlopen(req, timeout=timeout)
+        except urllib.error.HTTPError as e:
+            attempt += 1
+            if e.code < 500 and e.code != 429:
+                raise
+            if attempt >= tries:
+                raise
+            time.sleep(wait * attempt)
+
+
 def _lang():
     return _settings().get('language', 'zh')
 
@@ -217,8 +301,10 @@ def _download_images(html, img_dir, rel_prefix):
         src = m.group(1)
         counter[0] += 1
         try:
-            req = urllib.request.Request(src, headers={'User-Agent': 'Mozilla/5.0'})
-            resp = urllib.request.urlopen(req, timeout=15)
+            req = urllib.request.Request(src, headers=_browser_headers(
+                '/problemset/', accept='image/avif,image/webp,image/apng,image/*,*/*;q=0.8',
+                json_body=False, host=False))
+            resp = _urlopen_retry(req, timeout=15, tries=2)
             data = resp.read()
             ext = _guess_image_ext(src, resp)
             fname = str(counter[0]) + ext
@@ -247,8 +333,10 @@ def _download_markdown_images(md, img_dir, rel_prefix):
             return m.group(0)
         counter[0] += 1
         try:
-            req = urllib.request.Request(raw_src, headers={'User-Agent': 'Mozilla/5.0'})
-            resp = urllib.request.urlopen(req, timeout=15)
+            req = urllib.request.Request(raw_src, headers=_browser_headers(
+                '/problemset/', accept='image/avif,image/webp,image/apng,image/*,*/*;q=0.8',
+                json_body=False, host=False))
+            resp = _urlopen_retry(req, timeout=15, tries=2)
             data = resp.read()
             ext = _guess_image_ext(raw_src, resp)
             fname = str(counter[0]) + ext
@@ -341,28 +429,25 @@ def _save_cookie_from_text(text):
 
 
 def _validate_cookie(cookie_dict):
-    """用需要登录的查询验证会话：CN 用 todayRecord.userStatus，US 用 globalData.userStatus.isSignedIn。"""
+    """用需要登录的查询验证会话。
+
+    userStatus { isSignedIn username } 在 cn 和 com 上都是有效字段（com 上没有 globalData，
+    cn 的 todayRecord.userStatus 未登录时直接返回 null），所以两边统一用它。
+    """
     try:
         all_cookies = cookie_dict.get('all', {})
         raw = '; '.join(k + '=' + v for k, v in all_cookies.items())
         if not raw:
             session = cookie_dict.get('LEETCODE_SESSION') or cookie_dict.get('sl-session') or ''
             raw = 'LEETCODE_SESSION=' + session
-        if _site() == 'cn':
-            query = 'query { todayRecord { userStatus } }'
-        else:
-            query = 'query { globalData { userStatus { isSignedIn } } }'
         req = urllib.request.Request(
             _base_url() + '/graphql/',
-            data=json.dumps({'query': query}).encode(),
-            headers={'Content-Type': 'application/json', 'Cookie': raw, 'User-Agent': 'Mozilla/5.0'}
+            data=json.dumps({'query': 'query { userStatus { isSignedIn username } }'}).encode(),
+            headers=_browser_headers('/problemset/', raw),
         )
-        resp = urllib.request.urlopen(req, timeout=10)
-        data = json.loads(resp.read()).get('data', {})
-        if _site() == 'cn':
-            rec = (data.get('todayRecord') or [{}])[0]
-            return rec.get('userStatus') is not None
-        return bool((data.get('userStatus') or {}).get('isSignedIn'))
+        resp = _urlopen_retry(req, timeout=10, tries=2)
+        status = (json.loads(resp.read()).get('data') or {}).get('userStatus') or {}
+        return bool(status.get('isSignedIn'))
     except Exception:
         return False
 
@@ -381,20 +466,13 @@ def _fetch_csrftoken(cookie_raw=''):
     """通过 nojGlobalData 获取 csrftoken（带登录会话，尽量和会话匹配）。"""
     try:
         base = _base_url()
-        headers = {
-            'Content-Type': 'application/json',
-            'User-Agent': 'Mozilla/5.0',
-            'Origin': base,
-            'Referer': base + '/',
-        }
-        if cookie_raw:
-            headers['Cookie'] = cookie_raw
+        headers = _browser_headers('/', cookie_raw)
         req = urllib.request.Request(
             base + '/graphql/',
             data=json.dumps({'query': 'query nojGlobalData { siteRegion }'}).encode(),
             headers=headers,
         )
-        resp = urllib.request.urlopen(req, timeout=10)
+        resp = _urlopen_retry(req, timeout=10, tries=2)
         for h in (resp.headers.get_all('Set-Cookie') or []):
             if h.lower().startswith('csrftoken='):
                 return h.split('=', 1)[1].split(';', 1)[0]
@@ -453,18 +531,12 @@ class LeetCodeToolsClient:
             payload['operationName'] = operation_name
         body = json.dumps(payload).encode()
         base = _base_url()
-        headers = {
-            'Content-Type': 'application/json',
-            'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36',
-            'Origin': base,
-            'Referer': base + '/problemset/',
-        }
-        if self.cookie_raw:
-            headers['Cookie'] = self.cookie_raw
-        if self.csrf_token:
-            headers['X-CSRFToken'] = self.csrf_token
+        headers = _browser_headers('/problemset/', self.cookie_raw, self.csrf_token)
         req = urllib.request.Request(base + '/graphql/', data=body, headers=headers)
-        resp = urllib.request.urlopen(req, timeout=30)
+        try:
+            resp = _urlopen_retry(req, timeout=30)
+        except urllib.error.HTTPError as e:
+            raise Exception(_http_error_text(e, 'GraphQL'))
         data = json.loads(resp.read())
         if 'errors' in data:
             raise Exception('GraphQL error: ' + str(data['errors']))
@@ -638,25 +710,30 @@ class LeetCodeToolsClient:
         if need_interpret:
             stub_code = _insert_return_stubs(code, meta_str)
             outputs = []
-            if _site() != 'cn':
-                # 美国站 Run Code 被 Cloudflare 拦，跳过，只写空预期输出
-                outputs = [''] * len(testcases)
-            else:
-                try:
-                    sid = self.interpret_solution(title_slug, question_id, lang, stub_code, example)
-                    result_data = self._check_interpret(sid)
-                    expected = result_data.get('expected_code_answer', [])
-                    # 去尾哨兵
-                    while expected and expected[-1] == '':
-                        expected.pop()
-                    for v in expected:
-                        try:
-                            outputs.append(json.loads(v))
-                        except Exception:
-                            outputs.append(v)
-                except Exception as e:
+            try:
+                sid = self.interpret_solution(title_slug, question_id, lang, stub_code, example)
+                result_data = self._check_interpret(sid)
+                expected = result_data.get('expected_code_answer', [])
+                # 去尾哨兵
+                while expected and expected[-1] == '':
+                    expected.pop()
+                for v in expected:
+                    try:
+                        outputs.append(json.loads(v))
+                    except Exception:
+                        outputs.append(v)
+            except Exception as e:
+                # 以前美国站是直接跳过（认为 Run Code 被 Cloudflare 拦）。现在请求头已经
+                # 浏览器化，就先试一把：cn 上失败照旧弹框，美国站失败安静退化成空预期值，
+                # 免得每次拉题都被弹框打断（Run Online 不受影响）。
+                if _site() == 'cn':
                     sublime.error_message('LeetCodeTools: interpret failed\n\n' + str(e))
-                    outputs = [''] * len(testcases)
+                else:
+                    sublime.status_message(
+                        'LeetCodeTools: 没拿到官方期望输出（.com 上 Run Code 被 Cloudflare 挡住时属正常）— '
+                        + str(e)[:80])
+                # None = "这条没有期望值"：面板里就不显示 EXPECT，也不会算出假的 FAIL
+                outputs = [None] * len(testcases)
             with open(in_path, 'w', encoding='utf-8') as f:
                 serializable = []
                 for tc in testcases:
@@ -672,8 +749,6 @@ class LeetCodeToolsClient:
         }
 
     def submit_code(self, problem_slug, question_id, lang_slug, typed_code, study_plan_slug=None):
-        if _site() != 'cn':
-            raise Exception('美国站 (leetcode.com) 的提交被 Cloudflare 防护，本插件暂不支持 US 提交。请改用网页提交，或把 site 设回 "cn"。')
         base_url = _base_url()
         url = base_url + '/problems/' + problem_slug + '/submit/'
         body = {
@@ -684,25 +759,12 @@ class LeetCodeToolsClient:
         if study_plan_slug:
             body['study_plan_slug'] = study_plan_slug
         payload = json.dumps(body).encode()
-        headers = {
-            'Content-Type': 'application/json',
-            'Cookie': self.cookie_raw,
-            'Origin': _base_url(),
-            'Referer': _base_url() + '/problems/' + problem_slug + '/',
-            'User-Agent': 'Mozilla/5.0',
-        }
-        if self.csrf_token:
-            headers['X-CSRFToken'] = self.csrf_token
+        headers = _browser_headers('/problems/' + problem_slug + '/', self.cookie_raw, self.csrf_token)
         req = urllib.request.Request(url, data=payload, headers=headers)
         try:
-            resp = urllib.request.urlopen(req, timeout=30)
+            resp = _urlopen_retry(req, timeout=30)
         except urllib.error.HTTPError as e:
-            body = ''
-            try:
-                body = e.read().decode('utf-8', 'replace')
-            except Exception:
-                pass
-            raise Exception('Submit HTTP %d: %s' % (e.code, body))
+            raise Exception(_http_error_text(e, 'Submit'))
         res_json = json.loads(resp.read())
         if 'submission_id' not in res_json:
             raise Exception('Submission failed: ' + str(res_json))
@@ -710,13 +772,15 @@ class LeetCodeToolsClient:
 
     def check_submission(self, submission_id):
         url = _base_url() + '/submissions/detail/' + str(int(submission_id)) + '/check/'
+        headers = _browser_headers('/submissions/detail/' + str(int(submission_id)) + '/check/',
+                                   self.cookie_raw)
         for _ in range(20):
             time.sleep(1)
-            req = urllib.request.Request(url, headers={
-                'Cookie': self.cookie_raw,
-                'User-Agent': 'Mozilla/5.0',
-            })
-            resp = urllib.request.urlopen(req, timeout=10)
+            req = urllib.request.Request(url, headers=headers)
+            try:
+                resp = _urlopen_retry(req, timeout=10, tries=3)
+            except urllib.error.HTTPError as e:
+                raise Exception(_http_error_text(e, 'Check submission'))
             data = json.loads(resp.read())
             state = data.get('state', '')
             if state == 'SUCCESS':
@@ -732,17 +796,12 @@ class LeetCodeToolsClient:
             'typed_code': typed_code,
             'data_input': test_input,
         }).encode()
-        headers = {
-            'Content-Type': 'application/json',
-            'Cookie': self.cookie_raw,
-            'Origin': _base_url(),
-            'Referer': _base_url() + '/problems/' + problem_slug + '/',
-            'User-Agent': 'Mozilla/5.0',
-        }
-        if self.csrf_token:
-            headers['X-CSRFToken'] = self.csrf_token
+        headers = _browser_headers('/problems/' + problem_slug + '/', self.cookie_raw, self.csrf_token)
         req = urllib.request.Request(url, data=payload, headers=headers)
-        resp = urllib.request.urlopen(req, timeout=30)
+        try:
+            resp = _urlopen_retry(req, timeout=30)
+        except urllib.error.HTTPError as e:
+            raise Exception(_http_error_text(e, 'Run Code'))
         res = json.loads(resp.read())
         if 'interpret_id' not in res:
             raise Exception('Interpret failed: ' + str(res))
@@ -750,13 +809,15 @@ class LeetCodeToolsClient:
 
     def _check_interpret(self, interpret_id):
         url = _base_url() + '/submissions/detail/' + str(interpret_id) + '/check/'
+        headers = _browser_headers('/submissions/detail/' + str(interpret_id) + '/check/',
+                                   self.cookie_raw)
         for _ in range(20):
             time.sleep(1)
-            req = urllib.request.Request(url, headers={
-                'Cookie': self.cookie_raw,
-                'User-Agent': 'Mozilla/5.0',
-            })
-            resp = urllib.request.urlopen(req, timeout=10)
+            req = urllib.request.Request(url, headers=headers)
+            try:
+                resp = _urlopen_retry(req, timeout=10, tries=3)
+            except urllib.error.HTTPError as e:
+                raise Exception(_http_error_text(e, 'Run Code check'))
             data = json.loads(resp.read())
             state = data.get('state', '')
             if state == 'SUCCESS':
