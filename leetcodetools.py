@@ -398,14 +398,65 @@ def _clean_solution_markdown(md, videos=None):
 
 # ==================== Cookie & API helpers ====================
 
+# 从 DevTools 复制出来的各种形态里抠 cookie：表头一行 / Copy as cURL / Copy as fetch
+#
+# 三种写法都要认：
+#   -H 'cookie: 值'      cURL（bash/cmd 都是引号包住整个「名字: 值」）
+#   "cookie": "值"       Copy as fetch（值自己带引号）
+#   Cookie: 值           裸表头 / 或者就贴了值本身
+_COOKIE_IN_TEXT_RE = re.compile(
+    r'''(?isx)
+    (?:
+        (?P<oq>["']) \s* \bcookie\b \s* : \s* (?P<whole>.*?) (?P=oq)
+      | \bcookie\b \s* ["']? \s* : \s*
+        (?: (?P<q>["']) (?P<quoted>.*?) (?P=q) | (?P<bare>[^\n]*) )
+    )''')
+_COOKIE_FLAG_RE = re.compile(
+    r'''(?is)(?:-b|--cookie)\s+(?:(?P<q>["'])(?P<quoted>.*?)(?P=q)|(?P<bare>\S+))''')
+
+
+def _extract_cookie_text(text):
+    """从粘贴的内容里抠出 Cookie 值本身。
+
+    支持的粘法（都是 DevTools 里点两下就能拿到的，省得手动全选一长串）：
+      * 裸的 Cookie 值：`LEETCODE_SESSION=…; csrftoken=…`
+      * 表头一行：`Cookie: LEETCODE_SESSION=…`
+      * **Copy as cURL**：`-H 'cookie: …'` / `-H "cookie: …"` / `-b '…'` / `--cookie "…"`
+      * **Copy as fetch**：`"cookie": "…"`
+    抠不出来（比如只贴了一个 session 值）就原样返回，交给下面按老逻辑处理。
+    """
+    raw = (text or '').replace('\r\n', '\n').replace('\r', '\n')
+    for rx in (_COOKIE_IN_TEXT_RE, _COOKIE_FLAG_RE):
+        m = rx.search(raw)
+        if not m:
+            continue
+        value = None
+        for key in ('whole', 'quoted'):
+            try:
+                value = m.group(key)
+            except IndexError:
+                value = None
+            if value is not None:
+                break
+        if value is None:
+            value = m.group('bare') or ''
+        # 值被终端折行时中间会插换行，直接去掉（cookie 值里不会真有换行）
+        value = re.sub(r'[\r\n\t]+', '', value).strip()
+        if value:
+            return value
+    return raw
+
+
 def _save_cookie_from_text(text):
-    """解析用户粘贴的 Cookie（完整 Cookie 头 / LEETCODE_SESSION=... / 单独的 session 值）。"""
+    """解析用户粘贴的内容并保存登录态。
+
+    接受：整条 Cookie / `Cookie: …` 一行 / Copy as cURL 整段 / Copy as fetch 整段 /
+    `LEETCODE_SESSION=…` / 单独的 session 值。
+    """
+    text = _extract_cookie_text(text)
     text = (text or '').strip().strip(';').strip()
     if not text:
         raise ValueError('Cookie is empty.')
-    # 去掉可能带上的 "Cookie:" 前缀
-    if text.lower().startswith('cookie:'):
-        text = text[7:].strip()
     # 换行 / 多余空白统一成单个空格（避免换行把值弄坏）
     text = ' '.join(text.split())
     pairs = {}
@@ -1912,8 +1963,11 @@ class LeetcodeLoginCommand(sublime_plugin.WindowCommand):
             '2. 按 F12 → 选「网络 / Network」标签 → 刷新一次页面\n'
             '3. 点左侧任意一个 ' + base + ' 的请求\n'
             '4. 右侧找「请求标头 / Request Headers」→ 找到 Cookie 这一行\n'
-            '5. 双击它的值 → Ctrl+A 全选 → Ctrl+C 复制\n'
-            '   （很长，务必全选；一定要从「请求标头」复制，不要从响应头的 Set-Cookie 复制）\n'
+            '5. 复制整条值，随便用哪种办法：\n'
+            '   · 右键那个值 → Copy value（最省事）\n'
+            '   · 在值上连点三下选中整段 → Ctrl+C（别按 Ctrl+A，那会选中整个面板）\n'
+            '   · 或者右键左侧请求 → Copy → Copy as cURL，整段粘过来也行（插件会自己抠）\n'
+            '   （一定要从「请求标头」复制，不要从响应头的 Set-Cookie 复制）\n'
             '6. 回到 Sublime，粘进输入框，回车\n\n'
             '（leetcode.cn 只贴 LEETCODE_SESSION 的值也能用；整条粘更好。）\n\n'
             + us_note +
@@ -1922,12 +1976,14 @@ class LeetcodeLoginCommand(sublime_plugin.WindowCommand):
             '2. F12 → Network tab → reload the page.\n'
             '3. Click any request to ' + base + '.\n'
             '4. Request Headers → find the Cookie line.\n'
-            '5. Double-click its value → Ctrl+A → Ctrl+C (it is long).\n'
+            '5. Copy the whole value: right-click it → Copy value, or triple-click it → Ctrl+C,\n'
+            '   or right-click the request → Copy → Copy as cURL and paste that whole block\n'
+            '   (the plugin extracts the cookie from it).\n'
             '   Copy from Request Headers, never from a Set-Cookie response header.\n'
             '6. Paste it into the input box and press Enter.'
         )
         self.window.show_input_panel(
-            '粘贴 Cookie（推荐整条 Request Headers 的 Cookie / paste the whole Cookie header）:',
+            '粘贴 Cookie（整条 Cookie / Copy as cURL 整段都可以）:',
             '', self._on_cookie, None,
             lambda: sublime.status_message('LeetCodeTools: Login cancelled'))
 
@@ -1937,8 +1993,14 @@ class LeetcodeLoginCommand(sublime_plugin.WindowCommand):
         except Exception:
             sublime.error_message(
                 'LeetCodeTools: 没识别出登录凭证。\n\n'
-                '请从 ' + _base_url() + ' 的「F12 → Network → Request Headers → Cookie」\n'
-                '整条复制（里面要有 LEETCODE_SESSION=很长一串），再运行一次 Login。')
+                '请从 ' + _base_url() + ' 的「F12 → Network → Request Headers → Cookie」复制整条值\n'
+                '（右键值 → Copy value，或右键请求 → Copy as cURL 整段粘贴），\n'
+                '里面要有 LEETCODE_SESSION=很长一串。然后再运行一次 Login。\n\n'
+                'LeetCodeTools: could not find a login cookie.\n'
+                'Copy the whole Cookie value from ' + _base_url() + ' (F12 → Network → Request Headers):\n'
+                'right-click the value → Copy value, or right-click the request → Copy → Copy as cURL and\n'
+                'paste that whole block. It must contain LEETCODE_SESSION=<a very long value>.\n'
+                'Then run Login again.')
             return
 
         sublime.status_message('LeetCodeTools: Verifying cookie...')
@@ -1955,7 +2017,13 @@ class LeetcodeLoginCommand(sublime_plugin.WindowCommand):
                     '2. 复制的是「Request Headers → Cookie」的整条值\n'
                     '   （不是 Cookie 列表里的单个值，也不是响应头的 Set-Cookie）\n'
                     '3. 里面确实有 LEETCODE_SESSION=\n\n'
-                    '再运行一次 Login 重试。')
+                    '再运行一次 Login 重试。\n\n'
+                    'LeetCodeTools: sign-in failed. Please check:\n'
+                    '1. You are logged in to ' + _base_url() + ' in your browser.\n'
+                    '2. You copied the whole "Request Headers → Cookie" value (not a single cookie from the\n'
+                    '   Application panel, and not a Set-Cookie response header).\n'
+                    '3. It really contains LEETCODE_SESSION=.\n\n'
+                    'Run Login again to retry.')
                 return
             warn = ''
             if _site() != 'cn':
@@ -1965,10 +2033,16 @@ class LeetcodeLoginCommand(sublime_plugin.WindowCommand):
                     warn = ('\n\n⚠ 这条 Cookie 里没有 ' + ' / '.join(missing) + '。\n'
                             '搜题、拉题、离线 Run 都正常；但 Submit / Run Online 很可能被 Cloudflare 挑战拦下。\n'
                             '想提交的话：在浏览器里打开一道题并提交或运行一次（过掉人机挑战），\n'
-                            '再从同一个浏览器复制整条 Cookie 重新 Login（并让 browser_ua 与之一致）。')
-            sublime.status_message('LeetCodeTools: Login successful!')
+                            '再从同一个浏览器复制整条 Cookie 重新 Login（并让 browser_ua 与之一致）。\n\n'
+                            '⚠ This cookie has no ' + ' / '.join(missing) + '.\n'
+                            'Search / fetch / offline Run still work, but Submit and Run Online will most\n'
+                            'likely be blocked by a Cloudflare challenge.\n'
+                            'To give it a chance: open a problem in the browser and submit or run once (to\n'
+                            'pass the challenge), then copy the whole Cookie from that same browser and run\n'
+                            'Login again (and set browser_ua to match that browser).')
+            sublime.status_message('LeetCodeTools: 登录成功 / Login successful')
             if warn:
-                sublime.message_dialog('LeetCodeTools: 登录成功' + warn)
+                sublime.message_dialog('LeetCodeTools: 登录成功 / Login successful' + warn)
 
         _run_in_thread(self.window, work, _on_done=done)
 
