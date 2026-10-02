@@ -46,8 +46,8 @@ Settings are edited via `Preferences: LeetCodeTools Settings` in the command pal
 |--------|--------|------|
 | `working_dir` | `~/leetcode` | Where problems are saved. 题目保存目录 |
 | `default_lang` | `python3` | Default language used when fetching a problem. 拉题时的默认语言 |
-| `language` | `zh` | Problem language (`zh` / `en`). 题目语言（`zh` / `en`） |
-| `site` | `cn` | `cn` = leetcode.cn; `com` = leetcode.com. Cookies and caches are stored per site, so each site needs its own `Login` and switching never mixes them. `cn` = leetcode.cn；`com` = leetcode.com。Cookie 和缓存按站点分开存，两个站各要 `Login` 一次，切站不会互相覆盖 |
+| `language` | `zh` | Problem language (`zh` / `en`), **independent of `site`**. leetcode.com has no Chinese content, so `com` + `zh` falls back to English. The title cache is kept per language (`problem_list_zh.json` / `problem_list_en.json`). 题目语言（`zh` / `en`），**和 `site` 无关**。英文站没有中文内容，所以 `com` + `zh` 会回滚成英文。标题缓存按语言分成 `problem_list_zh.json` / `problem_list_en.json` 两份 |
+| `site` | `cn` | `cn` = leetcode.cn; `com` = leetcode.com. Cookies and per-problem caches are stored per site, so each site needs its own `Login`. `cn` = leetcode.cn；`com` = leetcode.com。Cookie 和每题缓存按站点分开存，两个站各要 `Login` 一次 |
 | `browser_ua` | `""` | User-Agent used for requests. Leave empty for a built-in Chrome UA; set it to your own browser's exact UA when you want a pasted `cf_clearance` to be accepted (see the leetcode.com note below). 请求使用的 User-Agent。留空用内置 Chrome UA；想让粘贴的 `cf_clearance` 生效就填自己浏览器的 UA（见下方 leetcode.com 说明） |
 | `cache_age_days` | `7` | Cache age in days for the problem list and study plans; auto-refreshes when expired. 题目列表与题集的缓存天数，过期自动刷新 |
 | `run_timeout` | `1` | Time limit in seconds for the offline Run (0 = no limit). 离线 Run 的超时秒数（0 表示不限时） |
@@ -109,14 +109,17 @@ User-facing files go under `working_dir`; the plugin's internal files go into th
 
 **In the cache `{working_dir}/.cache/`（在缓存目录下）:**
 
-Everything cache-side is **per site**: `leetcode.cn` keeps the plain names below, other sites get a
-`_com` suffix (`cookie_com.json`, `problems_com/`, …), so switching `site` never mixes the two.
-缓存文件都是**按站点分开**的：`leetcode.cn` 用下面这些名字，其它站点带 `_com` 后缀（`cookie_com.json`、`problems_com/` …），切站不会互相覆盖。
+Everything cookie-side is **per site**; the problem/title list is **per language**. `leetcode.cn` keeps
+the plain cookie names and can produce both title lists; `leetcode.com` only ever writes the English one,
+so `com` + `language: zh` reuses the Chinese list downloaded from cn and falls back to English for
+problems it does not contain.
+Cookie 那份**按站点**分；题目列表（标题）**按语言**分。`leetcode.cn` 沿用原来的 Cookie 文件名，并且能同时产出中英两份标题列表；`leetcode.com` 只会写英文那份，所以 `com` + `language: zh` 会复用从 cn 下过的中文列表，列表里没有的题再回滚英文。
 
 | File 文件 | Content 内容 |
 |------|------|
 | `cookie.json` (cn) / `cookie_com.json` (com) | Login cookie for that site. 该站点的登录 Cookie |
-| `problem_list.json` / `problem_list_com.json` | Cached problem list. 题目列表缓存 |
+| `problem_list_zh.json` / `problem_list_en.json` | Title list per language. 按语言分的题目列表（标题缓存） |
+| `last_update_zh.json` / `last_update_en.json` | Refresh timestamp of each list. 各自列表的更新时间 |
 | `problems[_com]/{slug}.json` | Metadata (id / metaData / examples). 元数据（题号 / metaData / 示例用例） |
 | `problems[_com]/{slug}_in.json` | Parsed input cases. 解析后的输入用例 |
 | `problems[_com]/{slug}_out.json` | Expected outputs. 预期输出 |

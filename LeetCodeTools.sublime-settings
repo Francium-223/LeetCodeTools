@@ -9,15 +9,18 @@
     //   typescript, golang, rust, kotlin, swift, scala, ruby, php
     "default_lang": "python3",
 
-    // 题目描述语言：zh = 中文，en = 英文。
-    // Problem description language: "zh" (Chinese) or "en" (English).
+    // 题目描述语言：zh = 中文，en = 英文。**和 site 无关**：英文站（com）没有中文内容，
+    // 所以 site=com + language=zh 时中文会回滚成英文。题目列表（标题）缓存按语言分成
+    // problem_list_zh.json / problem_list_en.json 两份，cn 能同时产出两份，com 只有英文那份。
+    // Problem language: "zh" or "en" — independent of `site`. leetcode.com has no Chinese
+    // content, so com + zh falls back to English. The title list is cached per language
+    // (problem_list_zh.json / problem_list_en.json); only cn can produce the Chinese one.
     "language": "zh",
 
     // 站点：cn = 力扣中国（leetcode.cn），com = leetcode.com。
-    // Cookie 和缓存（题目列表 / 每题 JSON / 期望输出）都按站点分开存，
-    // 所以两个站各要 Login 一次，切站不会互相覆盖。
+    // Cookie 和每题缓存（problems[_com]/ 里的 JSON）按站点分开存，两个站各要 Login 一次。
     // Site: "cn" for leetcode.cn, "com" for leetcode.com.
-    // Cookies and caches are stored per site: run Login once per site.
+    // Cookies and per-problem caches are stored per site: run Login once per site.
     "site": "cn",
 
     // leetcode.com 的提交 / Run Code 后面有 Cloudflare 人机挑战。cf_clearance 这个 Cookie 是跟

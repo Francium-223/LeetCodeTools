@@ -1,2 +1,6 @@
 __pycache__/
 *.pyc
+
+# 本地调试脚本/临时缓存（不要提交）
+_dbg_tmp/
+.scratch/

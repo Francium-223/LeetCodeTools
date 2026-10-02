@@ -144,8 +144,21 @@ def _cache_dir():
     return os.path.join(_working_dir(), '.cache')
 
 
-def _last_update_path():
-    return os.path.join(_cache_dir(), 'last_update' + _site_key() + '.json')
+def _list_lang(lang=None):
+    """题目列表（标题）缓存按**语言**分家，和 site 无关：zh / en 各一份。"""
+    lang = (lang or _lang() or 'zh').strip().lower()
+    return lang if lang in ('zh', 'en') else 'zh'
+
+
+def _problem_title(p):
+    """按当前 language 取标题：zh 先中文，en 先英文，缺了就回滚另一种。"""
+    if _list_lang() == 'zh':
+        return p.get('titleCn') or p.get('title') or '?'
+    return p.get('title') or p.get('titleCn') or '?'
+
+
+def _last_update_path(lang=None):
+    return os.path.join(_cache_dir(), 'last_update_' + _list_lang(lang) + '.json')
 
 
 def _maybe_auto_update():
@@ -168,8 +181,24 @@ def _cookie_cache_path():
     return os.path.join(_cache_dir(), 'cookie' + _site_key() + '.json')
 
 
-def _problem_list_cache_path():
-    return os.path.join(_cache_dir(), 'problem_list' + _site_key() + '.json')
+def _problem_list_cache_path(lang=None):
+    # 标题缓存按语言分：problem_list_zh.json / problem_list_en.json
+    return os.path.join(_cache_dir(), 'problem_list_' + _list_lang(lang) + '.json')
+
+
+def _write_problem_list(lang, problems):
+    """写一份题目列表缓存（按语言），并记下这份的更新时间。"""
+    os.makedirs(_cache_dir(), exist_ok=True)
+    with open(_problem_list_cache_path(lang), 'w', encoding='utf-8') as f:
+        json.dump(problems, f, ensure_ascii=False, indent=2)
+    with open(_last_update_path(lang), 'w') as f:
+        json.dump({'timestamp': time.time()}, f)
+
+
+def _legacy_problem_list_paths():
+    """迁移前那两份按站点存的旧列表（cn 那份同时带中英标题）。"""
+    return [os.path.join(_cache_dir(), 'problem_list.json'),
+            os.path.join(_cache_dir(), 'problem_list_com.json')]
 
 
 def _study_plans_cache_path():
@@ -571,6 +600,10 @@ def _build_public_client():
 
 # ==================== LeetCode CN API 客户端 ====================
 
+# 同一时间只让一个线程去拉全量题目列表（4000+ 题要 40 个请求，别重复拉）
+_problem_list_lock = threading.Lock()
+
+
 class LeetCodeToolsClient:
     def __init__(self, raw_cookie):
         self.cookie_raw = raw_cookie
@@ -644,20 +677,51 @@ class LeetCodeToolsClient:
             skip += limit
             if skip >= total:
                 break
-        os.makedirs(_cache_dir(), exist_ok=True)
-        with open(_problem_list_cache_path(), 'w', encoding='utf-8') as f:
-            json.dump(all_questions, f, ensure_ascii=False, indent=2)
-        with open(_last_update_path(), 'w') as f:
-            json.dump({'timestamp': time.time()}, f)
+        # 英文那份谁都能产出；中文那份只有 cn 有（cn 一次同时给 title 和 titleCn）。
+        # 在 .com 上就只写英文那份，别把已有的中文列表覆盖掉。
+        _write_problem_list('en', [{
+            'frontendQuestionId': p['frontendQuestionId'],
+            'titleCn': '',
+            'title': p.get('title', ''),
+            'titleSlug': p.get('titleSlug', ''),
+            'difficulty': p.get('difficulty', ''),
+        } for p in all_questions])
+        if cn:
+            _write_problem_list('zh', all_questions)
         return all_questions
 
     def _load_cache(self):
+        """题目列表：先取当前语言的缓存；没有再退另一种语言 / 迁移前的旧文件；都没有才现拉。"""
         _maybe_auto_update()
-        cache_path = _problem_list_cache_path()
-        if os.path.exists(cache_path):
-            with open(cache_path, 'r', encoding='utf-8') as f:
-                return json.load(f)
+        lang = _list_lang()
+        data = _read_case_list(_problem_list_cache_path(lang))
+        if data:
+            return data
+        other = 'en' if lang == 'zh' else 'zh'
+        for path in [_problem_list_cache_path(other)] + _legacy_problem_list_paths():
+            data = _read_case_list(path)
+            if data:
+                # 手上是另一种语言（或迁移前的旧文件）。当前站点要是能产出当前语言那份，
+                # 就后台补上（cn 能出 zh 和 en；com 只能出 en，所以 com+zh 不重拉）。
+                if _site() == 'cn' or _list_lang() == 'en':
+                    self._refresh_problem_list_async()
+                return data
         return self._fetch_problem_list()
+
+    def _refresh_problem_list_async(self):
+        """后台补一次题目列表缓存；已经有一个在拉就直接跳过。"""
+        if not _problem_list_lock.acquire(blocking=False):
+            return
+
+        def run():
+            try:
+                self._fetch_problem_list()
+            except Exception:
+                pass
+            finally:
+                _problem_list_lock.release()
+
+        threading.Thread(target=run, daemon=True).start()
 
     def fetch_problem(self, question_id, lang='python3', working_dir=None, force=False, study_plan_slug=None):
         if working_dir is None:
@@ -681,6 +745,10 @@ class LeetCodeToolsClient:
             raise ValueError('Problem not found: ' + str(question_id))
 
         detail = self.get_problem_detail(title_slug)
+        if not detail:
+            # 列表缓存可能是另一个站的（比如 com + zh 用的是 cn 那份中文列表），
+            # 里面可能有本站没有的题，这里直接给个人话报错，别炸 AttributeError
+            raise Exception('Problem not found on ' + _base_url() + ': ' + str(question_id))
         os.makedirs(working_dir, exist_ok=True)
 
         # MD
@@ -2074,8 +2142,8 @@ class LeetcodeSearchCommand(sublime_plugin.WindowCommand):
             items = []
             for p in problems:
                 fid = p.get('frontendQuestionId', '?')
-                title = p.get('titleCn') or p.get('title') or '?'
-                items.append(['#' + str(fid) + '  ' + title, str(p.get('difficulty') or '?')])
+                items.append(['#' + str(fid) + '  ' + _problem_title(p),
+                              str(p.get('difficulty') or '?')])
 
             def on_select(idx):
                 if idx >= 0:
