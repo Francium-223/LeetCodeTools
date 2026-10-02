@@ -526,19 +526,6 @@ class LeetCodeToolsClient:
                 return json.load(f)
         return self._fetch_problem_list()
 
-    def search_problems(self, keyword):
-        problems = self._load_cache()
-        kw = keyword.strip().lower()
-        results = []
-        for p in problems:
-            fid = str(p.get('frontendQuestionId', ''))
-            slug = (p.get('titleSlug', '') or '').lower()
-            cn = (p.get('titleCn', '') or '').lower()
-            en = (p.get('title', '') or '').lower()
-            if kw == fid or kw in slug or kw in cn or kw in en:
-                results.append(p)
-        return results
-
     def fetch_problem(self, question_id, lang='python3', working_dir=None, force=False, study_plan_slug=None):
         if working_dir is None:
             working_dir = _working_dir()
@@ -1834,87 +1821,51 @@ class LeetcodeLoginCommand(sublime_plugin.WindowCommand):
 # ─── Search ───
 
 class LeetcodeSearchCommand(sublime_plugin.WindowCommand):
-    def run(self):
-        self.window.show_input_panel('LeetCode Search:', '', self._on_keyword, None, None)
+    """直接开顶部的 quick panel；输入过滤和选择都在同一个面板里完成。
 
-    def _on_keyword(self, keyword):
-        if not keyword.strip():
-            return
-        kw = keyword.strip()
-        sublime.status_message('LeetCode Tools: Searching...')
+    旧版是先在窗口底部 show_input_panel 输入关键词、再开 quick panel，多一步。
+    现在一次把全部题目（本地缓存）丢进 quick panel，用面板自带的过滤框按题号或标题筛，
+    选中即拉题并打开。
+    """
+
+    def run(self):
+        sublime.status_message('LeetCode Tools: Loading problem list...')
 
         def work(window):
             client = _build_client()
-            return client.search_problems(kw)
+            return client._load_cache()
 
-        def done(window, results):
-            if not results:
-                sublime.message_dialog('No problems matched "' + kw + '".')
+        def done(window, problems):
+            if not problems:
+                sublime.message_dialog(
+                    'Problem list is empty. Run "LeetCodeTools: Update" first.')
                 return
             items = []
-            for p in results:
+            for p in problems:
                 fid = p.get('frontendQuestionId', '?')
-                title = p.get('titleCn') or p.get('title', '?')
-                diff = p.get('difficulty', '?')
-                items.append(['#' + str(fid) + '  ' + title, str(diff)])
+                title = p.get('titleCn') or p.get('title') or '?'
+                items.append(['#' + str(fid) + '  ' + title, str(p.get('difficulty') or '?')])
 
             def on_select(idx):
                 if idx >= 0:
-                    p = results[idx]
-                    fid = p['frontendQuestionId']
+                    self._fetch_and_open(problems[idx].get('frontendQuestionId'))
 
-                    def fetch_and_open(window):
-                        sublime.status_message('LeetCode Tools: Fetching #' + str(fid) + '...')
-                        client = _build_client()
-                        return client.fetch_problem(fid)
-
-                    def done_fetch(window, result):
-                        if result:
-                            for k in ('md_path', 'code_path'):
-                                if result.get(k):
-                                    window.open_file(result[k])
-                            sublime.status_message('LeetCodeTools: #' + str(fid) + ' fetched')
-
-                    _run_in_thread(window, fetch_and_open, _on_done=done_fetch)
-
-            window.show_quick_panel(items, on_select)
+            self.window.show_quick_panel(items, on_select)
 
         _run_in_thread(self.window, work, _on_done=done)
 
-
-# ─── Fetch ───
-
-class LeetcodeFetchCommand(sublime_plugin.WindowCommand):
-    def run(self):
-        self.window.show_input_panel(
-            'Problem # (e.g. 1 or 1 python3; prefix ! to force overwrite):', '',
-            self._on_input, None, None
-        )
-
-    def _on_input(self, text):
-        s = (text or '').strip()
-        if not s:
-            return
-        force = s.startswith('!')
-        if force:
-            s = s[1:].strip()
-        parts = s.split()
-        if not parts:
-            return
-        qid = parts[0]
-        lang = parts[1] if len(parts) > 1 else _default_lang()
-
+    def _fetch_and_open(self, fid):
         def work(window):
+            sublime.status_message('LeetCode Tools: Fetching #' + str(fid) + '...')
             client = _build_client()
-            return client.fetch_problem(qid, lang, force=force)
+            return client.fetch_problem(fid)
 
         def done(window, result):
             if result:
-                if result.get('md_path'):
-                    window.open_file(result['md_path'])
-                if result.get('code_path'):
-                    window.open_file(result['code_path'])
-                sublime.status_message('LeetCodeTools: #' + str(result['fid']) + ' fetched')
+                for k in ('md_path', 'code_path'):
+                    if result.get(k):
+                        window.open_file(result[k])
+                sublime.status_message('LeetCodeTools: #' + str(fid) + ' fetched')
 
         _run_in_thread(self.window, work, _on_done=done)
 

@@ -1,7 +1,6 @@
 [
     { "caption": "LeetCodeTools: Login",  "command": "leetcode_login" },
     { "caption": "LeetCodeTools: Search", "command": "leetcode_search" },
-    { "caption": "LeetCodeTools: Fetch",  "command": "leetcode_fetch" },
     { "caption": "LeetCodeTools: Open in Browser", "command": "leetcode_open_browser" },
     { "caption": "LeetCodeTools: Fetch Official Explanations", "command": "leetcode_fetch_explanation" },
     { "caption": "LeetCodeTools: Select from Problem Set", "command": "leetcode_problem_set" },

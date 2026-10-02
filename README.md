@@ -10,8 +10,7 @@ LeetCodeTools 是一个 [Sublime Text](https://www.sublimetext.com/) 插件，�
 | Command 命令 | Description 说明 |
 |------|------|
 | `LeetCode Tools: Login` | Open the browser to log in and paste the `LEETCODE_SESSION` cookie. 打开浏览器登录并粘贴 `LEETCODE_SESSION` Cookie |
-| `LeetCode Tools: Search` | Search problems by id or title keyword. 按题号 / 标题关键字搜索题目 |
-| `LeetCode Tools: Fetch` | Fetch a problem by id (e.g. `1` or `1 python3`); prefix `!` to force overwrite (e.g. `!1`). 输入题号拉取题目（如 `1` 或 `1 python3`）；前缀 `!` 强制覆盖（如 `!1`） |
+| `LeetCode Tools: Search` | Open a filterable list of every problem (type an id or a title keyword in the panel, press Enter to fetch). 打开可过滤的题目列表（在面板里输入题号或标题关键字，回车拉题） |
 | `LeetCode Tools: Update` | Rebuild the local problem-list and study-plan caches. 重建本地题目列表和题集缓存 |
 | `LeetCode Tools: Run` | Run your code offline and compare with the official examples. 离线运行代码，与官方示例对比 |
 | `LeetCode Tools: Submit` | Submit the current code to LeetCode for judging. 把当前代码提交到力扣判题 |
@@ -34,8 +33,8 @@ LeetCodeTools 是一个 [Sublime Text](https://www.sublimetext.com/) 插件，�
 4. Press `Ctrl+Shift+P`, run `LeetCode Tools: Login`; it opens leetcode.cn in your browser. Log in, then copy the `LEETCODE_SESSION` cookie (F12 → Application → Cookies → `LEETCODE_SESSION`; double-click its Value and press Ctrl+A to select it all) and paste it into the input panel.
    按 `Ctrl+Shift+P`，运行 `LeetCode Tools: Login`；它会在浏览器打开 leetcode.cn，登录后复制 `LEETCODE_SESSION` cookie（F12 → Application → Cookies → `LEETCODE_SESSION`，双击 Value 后 Ctrl+A 全选）粘贴到输入框即可。
 
-> Note: Search / Fetch / Update / Submit need the login cookie; Open in Browser, Run, and Fetch Official Explanations do not (the official solution uses the public GraphQL API).
-> 说明：Search / Fetch / Update / Submit 需要登录 Cookie；Open in Browser、Run、Fetch Official Explanations 不需要登录（其中官方题解走的是公开 GraphQL 接口）。
+> Note: Search / Update / Submit need the login cookie; Open in Browser, Run, and Fetch Official Explanations do not (the official solution uses the public GraphQL API).
+> 说明：Search / Update / Submit 需要登录 Cookie；Open in Browser、Run、Fetch Official Explanations 不需要登录（其中官方题解走的是公开 GraphQL 接口）。
 
 ## Configuration / 配置
 
@@ -45,7 +44,7 @@ Settings are edited via `Preferences: LeetCodeTools Settings` in the command pal
 | Key 配置项 | Default 默认值 | Description 说明 |
 |--------|--------|------|
 | `working_dir` | `~/leetcode` | Where problems are saved. 题目保存目录 |
-| `default_lang` | `python3` | Default language for Fetch. Fetch 默认语言 |
+| `default_lang` | `python3` | Default language used when fetching a problem. 拉题时的默认语言 |
 | `language` | `zh` | Problem language (`zh` / `en`). 题目语言（`zh` / `en`） |
 | `site` | `cn` | `cn` = leetcode.cn; `com` = leetcode.com (**read-only**: search/fetch work, but Submit and the offline expected outputs are blocked by Cloudflare). `cn` = leetcode.cn；`com` = leetcode.com（**只读**：搜题/拉题可用，但提交和离线预期输出被 Cloudflare 拦截，不可用） |
 | `cache_age_days` | `7` | Cache age in days for the problem list and study plans; auto-refreshes when expired. 题目列表与题集的缓存天数，过期自动刷新 |
@@ -53,8 +52,8 @@ Settings are edited via `Preferences: LeetCodeTools Settings` in the command pal
 
 ## Supported languages / 支持的语言
 
-These languages can be used with Fetch (code template) and Submit; the offline Run is Python-only (see limitations below).
-以下语言可用于 Fetch（代码模板）和 Submit；离线 Run 目前仅支持 Python（见下方限制）。
+These languages are available for fetched code templates and for Submit; the offline Run is Python-only (see limitations below).
+以下语言可用于拉取的代码模板和 Submit；离线 Run 目前仅支持 Python（见下方限制）。
 
 | Language slug 语言 | Extension 扩展名 | Run offline 离线运行 |
 |------|------|------|
@@ -78,8 +77,8 @@ These languages can be used with Fetch (code template) and Submit; the offline R
 1. **Log in** (once): `LeetCode Tools: Login` → log in in the browser → copy `LEETCODE_SESSION` → paste it.
    **登录**（只需一次）：`LeetCode Tools: Login` → 浏览器登录 → 复制 `LEETCODE_SESSION` → 粘贴。
 
-2. **Fetch a problem**: `LeetCode Tools: Fetch` → enter an id (e.g. `1` or `1 python3`); it opens the `.md` and code file.
-   **拉题**：`LeetCode Tools: Fetch` → 输入题号（如 `1` 或 `1 python3`），自动打开 `.md` 和代码文件。
+2. **Pick a problem**: `LeetCode Tools: Search` → the panel lists every problem; type an id or a title keyword to filter, press Enter to fetch and open the `.md` and code file.
+   **选题**：`LeetCode Tools: Search` → 面板里列出全部题目，直接输入题号或标题关键字过滤，回车自动拉取并打开 `.md` 和代码文件。
 
 3. **Solve it**: write your solution in the code file.
    **做题**：在代码文件里写解法。
@@ -118,8 +117,8 @@ User-facing files go under `working_dir`; the plugin's internal files go into th
 
 ## Current limitations / 当前限制
 
-- Offline **Run currently supports only Python**: the local judge runs your code with Python `exec` and includes built-in parsing for `ListNode` / `TreeNode` / `Node`. Other languages (java / cpp / javascript / golang, …) can only Fetch templates and Submit — not run locally.
-- **离线 Run 目前仅支持 Python**：本地判题用 Python `exec` 运行你的代码，并内置了 `ListNode` / `TreeNode` / `Node` 的用例解析。其它语言（java / cpp / javascript / golang 等）目前只能 Fetch 代码模板和 Submit 提交，不能本地 Run。
+- Offline **Run currently supports only Python**: the local judge runs your code with Python `exec` and includes built-in parsing for `ListNode` / `TreeNode` / `Node`. Other languages (java / cpp / javascript / golang, …) can only fetch templates and submit — not run locally.
+- **离线 Run 目前仅支持 Python**：本地判题用 Python `exec` 运行你的代码，并内置了 `ListNode` / `TreeNode` / `Node` 的用例解析。其它语言（java / cpp / javascript / golang 等）目前只能拉取代码模板和 Submit 提交，不能本地 Run。
 - Only the China site ([leetcode.cn](https://leetcode.cn)) is supported; the global site ([leetcode.com](https://leetcode.com)) is planned but not yet implemented.
 - 目前只支持中国版（[leetcode.cn](https://leetcode.cn)）；美国版/国际版（[leetcode.com](https://leetcode.com)）待实现。
 
