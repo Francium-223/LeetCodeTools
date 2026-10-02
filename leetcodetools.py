@@ -30,14 +30,18 @@ def _base_url():
     return 'https://leetcode.cn' if _site() == 'cn' else 'https://leetcode.com'
 
 
-def _site_key():
+def _site_key(site=None):
     """缓存 / Cookie 按站点分家的后缀。
 
-    cn 沿用原来的文件名（`cookie.json` / `problem_list.json` / `problems/`…），
-    这样已有用户的 CN 缓存和登录态不用迁移；别的站加后缀（`cookie_com.json` …），
-    免得切站时把两边的题目列表、题目 JSON、期望输出互相覆盖。
+    cn 沿用原来的文件名（`cookie.json` / `problems/`…），这样已有用户的 CN 缓存和登录态
+    不用迁移；别的站加后缀（`cookie_com.json` / `problems_com/`…），免得切站互相覆盖。
     """
-    return '' if _site() == 'cn' else '_' + _site()
+    site = site or _site()
+    return '' if site == 'cn' else '_' + site
+
+
+def _other_site():
+    return 'cn' if _site() != 'cn' else 'com'
 
 
 def _working_dir():
@@ -111,6 +115,10 @@ def _http_error_text(e, what='Request'):
                 '再把「请求头里的完整 Cookie」（要含 cf_clearance / __cf_bm）粘给 Login，'
                 '并把设置里的 browser_ua 填成同一个浏览器的 User-Agent（clearance 和 UA 绑定）。'
                 % (what, e.code, mitigated or 'challenge'))
+    if e.code == 429:
+        return ('%s HTTP 429: LeetCode 限流了（Run Code / Submit 点太密），几秒后再试。\n'
+                '%s HTTP 429: rate limited by LeetCode — wait a few seconds and retry.'
+                % (what, what))
     if e.code in (401, 403):
         return ('%s HTTP %d: cookie 可能已过期，或者 LeetCode 临时限制了 API 访问'
                 '（比赛期间常见；也可以试试关掉 VPN）。%s' % (what, e.code, body))
@@ -209,20 +217,36 @@ def _study_plan_problems_cache_path():
     return os.path.join(_cache_dir(), 'study_plan_problems' + _site_key() + '.json')
 
 
-def _problem_cache_dir():
-    return os.path.join(_cache_dir(), 'problems' + _site_key())
+def _problem_cache_dir(site=None):
+    return os.path.join(_cache_dir(), 'problems' + _site_key(site))
 
 
-def _problem_json_path(slug):
-    return os.path.join(_problem_cache_dir(), slug + '.json')
+def _problem_json_path(slug, site=None):
+    return os.path.join(_problem_cache_dir(site), slug + '.json')
 
 
-def _problem_in_path(slug):
-    return os.path.join(_problem_cache_dir(), slug + '_in.json')
+def _problem_in_path(slug, site=None):
+    return os.path.join(_problem_cache_dir(site), slug + '_in.json')
 
 
-def _problem_out_path(slug):
-    return os.path.join(_problem_cache_dir(), slug + '_out.json')
+def _problem_out_path(slug, site=None):
+    return os.path.join(_problem_cache_dir(site), slug + '_out.json')
+
+
+def _read_expected_outputs(slug):
+    """读离线判题用的期望值（_out.json）。
+
+    当前站点没抓到期望值时（.com 的 Run Code 被 Cloudflare 挡着就是这种情况），
+    退回另一个站点的同名文件 —— 两个站的官方示例是一样的，cn 上抓过的值在 com 上照样能用。
+    返回 None 表示一个真值都没有，面板就不显示 EXPECT。
+    """
+    current = _read_case_list(_problem_out_path(slug))
+    if any(v is not None and v != '' for v in current):
+        return current
+    other = _read_case_list(_problem_out_path(slug, _other_site()))
+    if any(v is not None and v != '' for v in other):
+        return other
+    return current or None
 
 
 def _problem_images_dir(slug):
@@ -571,6 +595,36 @@ def _fetch_csrftoken(cookie_raw=''):
     return ''
 
 
+def _set_cookie_value(raw, name, value):
+    """把 raw cookie 串里的 name=… 换成新值；原本没有就追加。"""
+    parts = [p.strip() for p in (raw or '').split(';') if p.strip()]
+    out, found = [], False
+    for p in parts:
+        if p.split('=', 1)[0].strip().lower() == name.lower():
+            out.append(name + '=' + value)
+            found = True
+        else:
+            out.append(p)
+    if not found:
+        out.append(name + '=' + value)
+    return '; '.join(out)
+
+
+def _persist_csrftoken(token):
+    """把刷新到的 csrftoken 写回 cookie 文件，下次启动直接是新值（写不了就算了）。"""
+    try:
+        path = _cookie_cache_path()
+        with open(path, encoding='utf-8') as f:
+            data = json.load(f)
+        data['csrftoken'] = token
+        if isinstance(data.get('all'), dict):
+            data['all']['csrftoken'] = token
+        with open(path, 'w', encoding='utf-8') as f:
+            json.dump(data, f, ensure_ascii=False)
+    except Exception:
+        pass
+
+
 def _build_client():
     cookie_dict = get_leetcode_cookie()
     all_cookies = cookie_dict.get('all', {})
@@ -584,12 +638,13 @@ def _build_client():
         if cookie_dict.get('csrftoken'):
             raw += '; csrftoken=' + cookie_dict['csrftoken']
     client = LeetCodeToolsClient(raw)
-    # 只粘了 sl-session、缺 csrftoken 时，自动补一个（带会话去拉）
-    if not client.csrf_token:
-        csrf = _fetch_csrftoken(client.cookie_raw)
-        if csrf:
-            client.csrf_token = csrf
-            client.cookie_raw = client.cookie_raw + '; csrftoken=' + csrf
+    # csrftoken 会随浏览器重新登录轮换；拿着旧的去提交 / Run Code 会被拒（实测是 403/404，
+    # 很容易误判成"接口挂了"）。所以每次构建都拿当前会话换一个新的，变了就写回文件。
+    csrf = _fetch_csrftoken(client.cookie_raw)
+    if csrf and csrf != client.csrf_token:
+        client.csrf_token = csrf
+        client.cookie_raw = _set_cookie_value(client.cookie_raw, 'csrftoken', csrf)
+        _persist_csrftoken(csrf)
     return client
 
 
@@ -2109,9 +2164,9 @@ class LeetcodeLoginCommand(sublime_plugin.WindowCommand):
                             'To give it a chance: open a problem in the browser and submit or run once (to\n'
                             'pass the challenge), then copy the whole Cookie from that same browser and run\n'
                             'Login again (and set browser_ua to match that browser).')
-            sublime.status_message('LeetCodeTools: Login successful')
+            sublime.status_message('LeetCodeTools: Login successful!')
             if warn:
-                sublime.message_dialog('LeetCodeTools: Login successful' + warn)
+                sublime.message_dialog('LeetCodeTools: Login successful!' + warn)
 
         _run_in_thread(self.window, work, _on_done=done)
 
@@ -2242,11 +2297,7 @@ class LeetcodeRunCommand(sublime_plugin.TextCommand):
                     results = _run_offline_subprocess(
                         code, [], [], func_name, timeout,
                         example=example, meta_str=json.dumps(meta_obj), mode='example', filename=fp)
-                out_path = _problem_out_path(slug)
-                expected_outputs = None
-                if os.path.exists(out_path):
-                    with open(out_path, 'r', encoding='utf-8') as f:
-                        expected_outputs = json.load(f)
+                expected_outputs = _read_expected_outputs(slug)
             _, fname = os.path.split(fp)
             return _format_judge_panel(self.banner, fname, results, expected_outputs)
 
