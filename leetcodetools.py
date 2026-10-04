@@ -2086,11 +2086,6 @@ def _run_in_thread(window, target, **kwargs):
 class LeetcodeLoginCommand(sublime_plugin.WindowCommand):
     def run(self):
         base = _base_url()
-        try:
-            webbrowser.open(base + '/')
-        except Exception as e:
-            sublime.error_message('Failed to open browser:\n' + str(e))
-            return
         us_note = ''
         if _site() != 'cn':
             us_note = (
@@ -2101,7 +2096,9 @@ class LeetcodeLoginCommand(sublime_plugin.WindowCommand):
                 'On leetcode.com paste the WHOLE cookie: the Cloudflare cf_clearance token only\n'
                 'travels with the full header. Session-only cookies still search/fetch/run offline,\n'
                 'but Submit and Run Online will hit a 403 challenge.\n\n')
-        sublime.message_dialog(
+        # 先弹提示、点确认之后再开浏览器：message_dialog 是非阻塞的，
+        # 先开浏览器的话说明会被浏览器盖住，用户根本没机会看。
+        if not sublime.ok_cancel_dialog(
             'LeetCodeTools 登录 / Login —— ' + base + '\n\n'
             '中文：\n'
             '1. 在浏览器里登录 ' + base + '（页面能正常打开，说明已经过掉 Cloudflare）\n'
@@ -2125,8 +2122,14 @@ class LeetcodeLoginCommand(sublime_plugin.WindowCommand):
             '   or right-click the request → Copy → Copy as cURL and paste that whole block\n'
             '   (the plugin extracts the cookie from it).\n'
             '   Copy from Request Headers, never from a Set-Cookie response header.\n'
-            '6. Paste it into the input box and press Enter.'
-        )
+            '6. Paste it into the input box and press Enter.',
+            '打开浏览器 / Open browser'):
+            return
+        try:
+            webbrowser.open(base + '/')
+        except Exception as e:
+            sublime.error_message('Failed to open browser:\n' + str(e))
+            return
         self.window.show_input_panel(
             '粘贴 Cookie（整条 Cookie / Copy as cURL 整段都可以）:',
             '', self._on_cookie, None,
