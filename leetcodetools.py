@@ -893,9 +893,11 @@ class LeetCodeToolsClient:
         testcases = _parse_testcases(example, meta_str)
         question_id = detail.get('questionId', '')
 
-        # 检查缓存是否有效（force = 强制重抓：题面、代码模板、测试用例全部重新来过）
-        need_interpret = bool(force)
-        if not need_interpret and os.path.exists(out_path) and os.path.exists(in_path):
+        # 默认要抓一次（没有 / 无效的缓存都要抓）；只有"缓存已经有效"才跳过。
+        # force = 不管缓存有没有效都重抓（Reload Problem 用）。
+        # 注意别写成 need_interpret = bool(force)：那样普通 fetch 会直接跳过生成用例。
+        need_interpret = True
+        if not force and os.path.exists(out_path) and os.path.exists(in_path):
             try:
                 with open(out_path) as f:
                     cached = json.load(f)
