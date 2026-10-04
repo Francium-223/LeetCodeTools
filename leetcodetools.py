@@ -249,6 +249,19 @@ def _read_expected_outputs(slug):
     return current or None
 
 
+def _no_expected_hint():
+    '''没有期望值时，给一句能照做的下一步（顺便区分"没登录"和"没生成用例"）。'''
+    try:
+        get_leetcode_cookie()
+    except RuntimeError:
+        return ('Not logged in to ' + _base_url() + ' — run "LeetCodeTools: Login", '
+                'then "LeetCodeTools: Reload Problem".')
+    except Exception as e:
+        return 'Could not check the login state: ' + str(e)[:80]
+    return ('No testcases stored for this problem yet — run "LeetCodeTools: Reload Problem" '
+            'to generate them with LeetCode Run Code.')
+
+
 def _problem_images_dir(slug):
     return os.path.join(_cache_dir(), 'images', slug)
 
@@ -894,6 +907,7 @@ class LeetCodeToolsClient:
         if need_interpret:
             stub_code = _insert_return_stubs(code, meta_str)
             outputs = []
+            run_err = ''
             try:
                 sid = self.interpret_solution(title_slug, question_id, lang, stub_code, example)
                 result_data = self._check_interpret(sid)
@@ -907,14 +921,9 @@ class LeetCodeToolsClient:
                     except Exception:
                         outputs.append(v)
             except Exception as e:
-                # 以前美国站是直接跳过（认为 Run Code 被 Cloudflare 拦）。现在请求头已经
-                # 浏览器化，就先试一把：cn 上失败照旧弹框，美国站失败安静退化成空预期值，
-                # 免得每次拉题都被弹框打断（Run Online 不受影响）。
-                if _site() == 'cn':
-                    sublime.error_message('LeetCodeTools: interpret failed\n\n' + str(e))
-                else:
-                    sublime.status_message(
-                        'LeetCodeTools: no expected outputs (Run Code blocked) — ' + str(e)[:80])
+                # 先记下错误，等用例落盘之后再报（见下面）—— 顺序反了的话，
+                # 框没被点掉 / 进程被杀，这两个文件就永远写不出来。
+                run_err = str(e)
                 # None = "这条没有期望值"：面板里就不显示 EXPECT，也不会算出假的 FAIL
                 outputs = [None] * len(testcases)
             # 这次没抓到就别拿空值覆盖原来抓好的（force 重抓时尤其重要）
@@ -929,6 +938,14 @@ class LeetCodeToolsClient:
                 json.dump(serializable, f, ensure_ascii=False, indent=2)
             with open(out_path, 'w', encoding='utf-8') as f:
                 json.dump(outputs, f, ensure_ascii=False, indent=2)
+            # 报错必须在写文件之后：以前是先弹模态框（工作线程里同步阻塞），
+            # 框没被点掉就永远写不出用例 —— 表现就是"题面有了、用例压根没生成"。
+            if run_err:
+                if _site() == 'cn':
+                    sublime.error_message('LeetCodeTools: interpret failed\n\n' + run_err)
+                else:
+                    sublime.status_message(
+                        'LeetCodeTools: no expected outputs (Run Code blocked) — ' + run_err[:80])
 
         return {
             'titleSlug': title_slug, 'fid': fid, 'lang': lang, 'ext': ext,
@@ -2338,6 +2355,7 @@ class LeetcodeRunCommand(sublime_plugin.TextCommand):
             with open(fp, 'r', encoding='utf-8') as f:
                 code = f.read()
             example = test_data.get('exampleTestcases', '')
+            no_expect_hint = ''
             if self.online:
                 # 网页端 Ctrl+'：代码发给 LeetCode，用官方示例跑一遍
                 results = _run_online(code, slug, test_data, meta_obj, example, ext)
@@ -2367,8 +2385,10 @@ class LeetcodeRunCommand(sublime_plugin.TextCommand):
                         code, [], [], func_name, timeout,
                         example=example, meta_str=json.dumps(meta_obj), mode='example', filename=fp)
                 expected_outputs = _read_expected_outputs(slug)
+                if not any(v is not None and v != '' for v in (expected_outputs or [])):
+                    no_expect_hint = _no_expected_hint()
             _, fname = os.path.split(fp)
-            return _format_judge_panel(self.banner, fname, results, expected_outputs)
+            return _format_judge_panel(self.banner, fname, results, expected_outputs, no_expect_hint)
 
         def done(window, text):
             _show_output(window, self.panel, text)
@@ -2406,12 +2426,13 @@ def _display_val(val):
 _MISSING = object()
 
 
-def _format_judge_panel(banner, fname, results, expected_outputs=None):
+def _format_judge_panel(banner, fname, results, expected_outputs=None, hint=''):
     """把判题结果渲染成输出面板文本，离线和在线共用同一套排版。
 
     results 每条是一个 dict：input / output / stdout / error / elapsed；
     可选 expected（这一条的期望值）和 ok（服务端给的判定，给了就优先用它，不再本地按值比）。
     expected_outputs 是离线判题用的 _out.json（按下标对应 results），None 表示没有期望值文件。
+    hint 是"没有期望值"时面板里显示的那句原因 / 下一步。
     """
     lines = ['=' * 50, '  ' + banner + ' -- ' + fname, '=' * 50, '']
     passed = 0
@@ -2465,8 +2486,8 @@ def _format_judge_panel(banner, fname, results, expected_outputs=None):
         lines.append(str(passed) + '/' + str(len(results)) + ' passed.')
     else:
         lines.append(str(len(results)) + ' case(s) run — no expected outputs, nothing compared.')
-        lines.append('  (expected outputs come from LeetCode "Run Code"; on leetcode.com that can be')
-        lines.append('   blocked by Cloudflare — see the plugin README, then re-fetch to retry)')
+        if hint:
+            lines.append('  ' + hint)
     if has_time:
         lines.append('Total time: ' + _fmt_time(total_time))
     lines.append('=' * 50)
