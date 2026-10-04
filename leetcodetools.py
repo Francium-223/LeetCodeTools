@@ -2100,7 +2100,6 @@ class LeetcodeLoginCommand(sublime_plugin.WindowCommand):
         # 先开浏览器的话说明会被浏览器盖住，用户根本没机会看。
         if not sublime.ok_cancel_dialog(
             'LeetCodeTools 登录 / Login —— ' + base + '\n\n'
-            '中文：\n'
             '1. 在浏览器里登录 ' + base + '（页面能正常打开，说明已经过掉 Cloudflare）\n'
             '2. 按 F12 → 选「网络 / Network」标签 → 刷新一次页面\n'
             '3. 点左侧任意一个 ' + base + ' 的请求\n'
@@ -2113,7 +2112,6 @@ class LeetcodeLoginCommand(sublime_plugin.WindowCommand):
             '6. 回到 Sublime，粘进输入框，回车\n\n'
             '（leetcode.cn 只贴 LEETCODE_SESSION 的值也能用；整条粘更好。）\n\n'
             + us_note +
-            'English:\n'
             '1. Log in to ' + base + ' in your browser.\n'
             '2. F12 → Network tab → reload the page.\n'
             '3. Click any request to ' + base + '.\n'
