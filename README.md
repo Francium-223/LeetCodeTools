@@ -5,6 +5,37 @@ LeetCodeTools is A [Sublime Text](www.sublimetext.com) plugin for practicing [Le
 LeetCodeTools 是一个 [Sublime Text](https://www.sublimetext.com/) 插件，让你不用离开编辑器就能刷[力扣](leetcode.cn)（LeetCode）。它支持按题号或关键字搜索题目、拉取题目和官方题解、在本地离线运行代码并与官方示例对比、一键提交到力扣判题，还能从「[热题 100](https://leetcode.cn/studyplan/top-100-liked/)」「[面试经典 150 题](https://leetcode.cn/studyplan/top-interview-150/)」等题集里选题。题目和题解都会以 Markdown 文件保存到本地，登录一次即可长期使用。
 一个让你不用离开编辑器、直接在 [Sublime Text](https://www.sublimetext.com/) 里刷[力扣（LeetCode.cn）](https://leetcode.cn)的插件：搜索题目、拉取题目与官方题解、离线运行、直接提交。
 
+## How to login / 如何登录
+
+<img width="642" height="138" alt="vlcsnap-2026-10-05-03h36m40s568" src="https://github.com/user-attachments/assets/ba514d3e-66f3-48ed-bd6d-52a1f34c5812" />
+<img width="685" height="703" alt="vlcsnap-2026-10-05-03h36m43s777" src="https://github.com/user-attachments/assets/ac7a4da1-75ef-46a5-9346-83c23aa150f5" />
+<img width="1920" height="1080" alt="vlcsnap-2026-10-05-03h37m00s260" src="https://github.com/user-attachments/assets/e808a0c6-a4d6-4f16-926b-4b881855fda1" />
+<img width="1920" height="504" alt="vlcsnap-2026-10-05-03h37m31s165" src="https://github.com/user-attachments/assets/00e4301a-2ecd-417c-a7e4-96fea1d429e0" />
+<img width="1920" height="207" alt="vlcsnap-2026-10-05-03h37m37s047" src="https://github.com/user-attachments/assets/49f2559f-4bc9-429c-9f73-1c1d064ff896" />
+
+1. 在浏览器里登录 leetcode.cn（页面能正常打开，说明已经过掉 Cloudflare）
+2. 按 F12 → 选「网络 / Network」标签 → 刷新一次页面
+3. 点左侧任意一个 leetcode.cn 的请求
+4. 右侧找「请求标头 / Request Headers」→ 找到 Cookie 这一行
+5. 复制整条值，随便用哪种办法：
+   · 右键那个值 → Copy value（最省事）
+   · 在值上连点三下选中整段 → Ctrl+C（别按 Ctrl+A，那会选中整个面板）
+   · 或者右键左侧请求 → Copy → Copy as cURL，整段粘过来也行（插件会自己抠）
+   （一定要从「请求标头」复制，不要从响应头的 Set-Cookie 复制）
+6. 回到 Sublime，粘进输入框，回车
+
+（leetcode.cn 只贴 LEETCODE_SESSION 的值也能用；整条粘更好。）
+
+1. Log in to leetcode.cn in your browser.
+2. F12 → Network tab → reload the page.
+3. Click any request to leetcode.cn.
+4. Request Headers → find the Cookie line.
+5. Copy the whole value: right-click it → Copy value, or triple-click it → Ctrl+C,
+   or right-click the request → Copy → Copy as cURL and paste that whole block
+   (the plugin extracts the cookie from it).
+   Copy from Request Headers, never from a Set-Cookie response header.
+6. Paste it into the input box and press Enter. 打开浏览器 / Open browser
+
 ## Features / 功能
 
 | Command 命令 | Description 说明 |
